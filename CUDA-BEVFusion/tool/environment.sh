@@ -22,16 +22,16 @@
 
 # export CUDA_VISIBLE_DEVICES=2
 
-export TensorRT_Lib=/path/to/tensorrt/lib
-export TensorRT_Inc=/path/to/tensorrt/include
-export TensorRT_Bin=/path/to/tensorrt/bin
+export TensorRT_Lib=/data/gz_data/3rdParty/TensorRT-8.6.1.6/lib
+export TensorRT_Inc=/data/gz_data/3rdParty/TensorRT-8.6.1.6/include
+export TensorRT_Bin=/data/gz_data/3rdParty/TensorRT-8.6.1.6/bin
 
-export CUDA_HOME=/usr/local/cuda
+export CUDA_HOME=/usr/local/cuda-11.1
 export CUDA_Lib=$CUDA_HOME/lib64
 export CUDA_Inc=$CUDA_HOME/include
 export CUDA_Bin=$CUDA_HOME/bin
 
-export CUDNN_Lib=/path/to/cudnn/lib
+export CUDNN_Lib=$CUDA_HOME/lib64
 
 # export TensorRT_Lib=${TENSORRT_LIB}
 # export TensorRT_Inc=${TENSORRT_INCLUDE}
@@ -46,14 +46,15 @@ export CUDNN_Lib=/path/to/cudnn/lib
 # Just used to distinguish the libspconv version, it doesn't affect the version of cuda used by your application
 # For CUDA-11.x:    SPCONV_CUDA_VERSION=11.4
 # For CUDA-12.x:    SPCONV_CUDA_VERSION=12.6
-export SPCONV_CUDA_VERSION=12.8
+export SPCONV_CUDA_VERSION=11.4
 
 # resnet50/resnet50int8/swint
-export DEBUG_MODEL=resnet50int8
+export DEBUG_MODEL=bevfusion_df
+export DEBUG_PROFILE=bevfusion_df
 
 # fp16/int8
-export DEBUG_PRECISION=int8
-export DEBUG_DATA=example-data
+export DEBUG_PRECISION=fp16
+export DEBUG_DATA=dump_df/00000
 export USE_Python=OFF
 
 # check the configuration path
@@ -71,6 +72,7 @@ fi
 
 echo "=========================================================="
 echo "||  MODEL: $DEBUG_MODEL"
+echo "||  PROFILE: $DEBUG_PROFILE"
 echo "||  PRECISION: $DEBUG_PRECISION"
 echo "||  DATA: $DEBUG_DATA"
 echo "||  USEPython: $USE_Python"

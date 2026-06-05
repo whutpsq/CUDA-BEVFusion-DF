@@ -29,21 +29,25 @@ import shutil
 import tensor
 import argparse
 import numpy as np
-from torchpack.utils.config import configs
-from mmcv import Config
-from mmdet3d.datasets import build_dataloader, build_dataset
-from mmdet3d.utils import recursive_eval
 import torch
-from mmdet3d.core.bbox.structures import LiDARInstance3DBoxes
 
 def arg_parser():
     parser = argparse.ArgumentParser(description='For bevfusion evaluation on nuScenes dataset.')
     parser.add_argument('--config', dest='config', type=str, default='bevfusion/configs/nuscenes/det/transfusion/secfpn/camera+lidar/resnet50/convfuser.yaml')
+    parser.add_argument('--bevfusion-root', dest='bevfusion_root', type=str, default=os.environ.get("BEVFUSION_DF_ROOT"))
     # parser.add_argument('--checkpoint', dest='checkpoint', type=str, default='model/resnet50/bevfusion-det.pth')
     args = parser.parse_args()
     return args
 
 def dump_tensor(args):
+    if args.bevfusion_root:
+        sys.path.insert(0, os.path.abspath(args.bevfusion_root))
+
+    from torchpack.utils.config import configs
+    from mmcv import Config
+    from mmdet3d.datasets import build_dataloader, build_dataset
+    from mmdet3d.utils import recursive_eval
+
     configs.load(args.config, recursive=True)
     cfg = Config(recursive_eval(configs), filename=args.config)
     dataset = build_dataset(cfg.data.test)

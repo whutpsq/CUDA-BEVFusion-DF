@@ -44,6 +44,26 @@ if [ "$precision" == "int8" ]; then
     trtexec_dynamic_flags="--fp16 --int8"
 fi
 
+function ensure_custom_layernorm_plugin(){
+
+    plugin=${BuildDirectory}/libcustom_layernorm.so
+    if [ -f "$plugin" ]; then
+        return
+    fi
+
+    echo "Can not find $plugin. Building custom_layernorm plugin first."
+    mkdir -p $BuildDirectory
+    pushd $BuildDirectory > /dev/null
+    cmake .. && make custom_layernorm -j$(nproc)
+    status=$?
+    popd > /dev/null
+
+    if [ $status != 0 ] || [ ! -f "$plugin" ]; then
+        echo "Failed to build $plugin."
+        exit 1
+    fi
+}
+
 function get_onnx_number_io(){
 
     # $1=model
@@ -119,8 +139,6 @@ compile_trt_model "fuser" "$trtexec_dynamic_flags" 2 1
 # fp16 only
 compile_trt_model "camera.vtransform" "$trtexec_fp16_flags" 1 1
 
-# for myelin layernorm head.bbox, may occur a tensorrt bug at layernorm fusion but faster
-compile_trt_model "head.bbox" "$trtexec_fp16_flags" 1 6
-
-# for layernorm version head.bbox.onnx, accurate but slower
-# compile_trt_model "head.bbox.layernormplugin" "$trtexec_fp16_flags" 1 6 "--plugins=libcustom_layernorm.so"
+# head.bbox uses nv::CustomLayerNormalization and must load the TensorRT plugin.
+ensure_custom_layernorm_plugin
+compile_trt_model "head.bbox" "$trtexec_fp16_flags" 1 6 "--plugins=libcustom_layernorm.so"

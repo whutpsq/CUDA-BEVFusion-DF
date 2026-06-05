@@ -74,9 +74,9 @@ class BEVFusion {
   cudaStream_t stream_ = nullptr;
 
   static std::shared_ptr<BEVFusion> load_instance(string camera, string vtransform, string lidar, string fuser, string headbbox,
-                                                  string precision) {
+                                                  string precision, string profile) {
     std::shared_ptr<BEVFusion> instance(new BEVFusion());
-    if (!instance->load(camera, vtransform, lidar, fuser, headbbox, precision)) {
+    if (!instance->load(camera, vtransform, lidar, fuser, headbbox, precision, profile)) {
       instance.reset();
     }
     return instance;
@@ -86,12 +86,14 @@ class BEVFusion {
     if (stream_) checkRuntime(cudaStreamDestroy(stream_));
   }
 
-  bool load(string camera, string vtransform, string lidar, string fuser, string headbbox, string precision) {
+  bool load(string camera, string vtransform, string lidar, string fuser, string headbbox, string precision, string profile) {
+    bool is_bevfusion_df = profile == "bevfusion_df";
+
     bevfusion::camera::NormalizationParameter normalization;
-    normalization.image_width = 1600;
-    normalization.image_height = 900;
-    normalization.output_width = 704;
-    normalization.output_height = 256;
+    normalization.image_width = is_bevfusion_df ? 3840 : 1600;
+    normalization.image_height = is_bevfusion_df ? 2160 : 900;
+    normalization.output_width = is_bevfusion_df ? 352 : 704;
+    normalization.output_height = is_bevfusion_df ? 128 : 256;
     normalization.num_camera = 6;
     normalization.resize_lim = 0.48f;
     normalization.interpolation = bevfusion::camera::Interpolation::Bilinear;
@@ -101,9 +103,9 @@ class BEVFusion {
     normalization.method = bevfusion::camera::NormMethod::mean_std(mean, std, 1 / 255.0f, 0.0f);
 
     bevfusion::lidar::VoxelizationParameter voxelization;
-    voxelization.min_range = nvtype::Float3(-54.0f, -54.0f, -5.0);
-    voxelization.max_range = nvtype::Float3(+54.0f, +54.0f, +3.0);
-    voxelization.voxel_size = nvtype::Float3(0.075f, 0.075f, 0.2f);
+    voxelization.min_range = is_bevfusion_df ? nvtype::Float3(-51.2f, -51.2f, -5.0f) : nvtype::Float3(-54.0f, -54.0f, -5.0);
+    voxelization.max_range = is_bevfusion_df ? nvtype::Float3(+51.2f, +51.2f, +3.0f) : nvtype::Float3(+54.0f, +54.0f, +3.0);
+    voxelization.voxel_size = is_bevfusion_df ? nvtype::Float3(0.2f, 0.2f, 0.2f) : nvtype::Float3(0.075f, 0.075f, 0.2f);
     voxelization.grid_size =
         voxelization.compute_grid_size(voxelization.max_range, voxelization.min_range, voxelization.voxel_size);
     voxelization.max_points_per_voxel = 10;
@@ -123,25 +125,25 @@ class BEVFusion {
     }
 
     bevfusion::camera::GeometryParameter geometry;
-    geometry.xbound = nvtype::Float3(-54.0f, 54.0f, 0.3f);
-    geometry.ybound = nvtype::Float3(-54.0f, 54.0f, 0.3f);
+    geometry.xbound = is_bevfusion_df ? nvtype::Float3(-51.2f, 51.2f, 0.8f) : nvtype::Float3(-54.0f, 54.0f, 0.3f);
+    geometry.ybound = is_bevfusion_df ? nvtype::Float3(-51.2f, 51.2f, 0.8f) : nvtype::Float3(-54.0f, 54.0f, 0.3f);
     geometry.zbound = nvtype::Float3(-10.0f, 10.0f, 20.0f);
     geometry.dbound = nvtype::Float3(1.0, 60.0f, 0.5f);
-    geometry.image_width = 704;
-    geometry.image_height = 256;
-    geometry.feat_width = 88;
-    geometry.feat_height = 32;
+    geometry.image_width = is_bevfusion_df ? 352 : 704;
+    geometry.image_height = is_bevfusion_df ? 128 : 256;
+    geometry.feat_width = is_bevfusion_df ? 44 : 88;
+    geometry.feat_height = is_bevfusion_df ? 16 : 32;
     geometry.num_camera = 6;
-    geometry.geometry_dim = nvtype::Int3(360, 360, 80);
+    geometry.geometry_dim = is_bevfusion_df ? nvtype::Int3(128, 128, 80) : nvtype::Int3(360, 360, 80);
 
     bevfusion::head::transbbox::TransBBoxParameter transbbox;
     transbbox.out_size_factor = 8;
-    transbbox.pc_range = {-54.0f, -54.0f};
+    transbbox.pc_range = is_bevfusion_df ? nvtype::Float2{-51.2f, -51.2f} : nvtype::Float2{-54.0f, -54.0f};
     transbbox.post_center_range_start = {-61.2, -61.2, -10.0};
     transbbox.post_center_range_end = {61.2, 61.2, 10.0};
-    transbbox.voxel_size = {0.075, 0.075};
+    transbbox.voxel_size = is_bevfusion_df ? nvtype::Float2{0.2f, 0.2f} : nvtype::Float2{0.075f, 0.075f};
     transbbox.model = headbbox;
-    transbbox.confidence_threshold = 0.0f;
+    transbbox.confidence_threshold = is_bevfusion_df ? 0.2f : 0.0f;
     transbbox.sorted_bboxes = true;
 
     bevfusion::CoreParameter param;
@@ -263,6 +265,7 @@ PYBIND11_MODULE(libpybev, m) {
       .def("print", &BEVFusion::print)
       .def("update", &BEVFusion::update);
 
-  m.def("load_bevfusion", BEVFusion::load_instance);
+  m.def("load_bevfusion", BEVFusion::load_instance, py::arg("camera"), py::arg("vtransform"), py::arg("lidar"),
+        py::arg("fuser"), py::arg("headbbox"), py::arg("precision"), py::arg("profile") = "default");
   dlopen("libcustom_layernorm.so", RTLD_NOW);
 };

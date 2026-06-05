@@ -28,6 +28,7 @@ import libpybev
 model = os.environ["DEBUG_MODEL"]
 precision = os.environ["DEBUG_PRECISION"]
 data  = os.environ["DEBUG_DATA"]
+profile = os.environ.get("DEBUG_PROFILE", "default")
 
 image_names = [
     "0-FRONT.jpg",
@@ -38,14 +39,18 @@ image_names = [
     "5-BACK_RIGHT.jpg"
 ]
 
-images = []
-for file in image_names:
-    if(file.endswith(".jpg")):
-        image = cv2.imread(f"{data}/{file}")
-        image = image[..., ::-1]
-        images.append(image)
-
-images = np.stack(images, axis=0)[None]
+images_tensor_file = f"{data}/images.tensor"
+with_normalization = not os.path.exists(images_tensor_file)
+if with_normalization:
+    images = []
+    for file in image_names:
+        if(file.endswith(".jpg")):
+            image = cv2.imread(f"{data}/{file}")
+            image = image[..., ::-1]
+            images.append(image)
+    images = np.stack(images, axis=0)[None]
+else:
+    images = tensor.load(images_tensor_file)
 
 camera_intrinsics = tensor.load(f"{data}/camera_intrinsics.tensor")
 camera2lidar = tensor.load(f"{data}/camera2lidar.tensor")
@@ -59,7 +64,8 @@ core = libpybev.load_bevfusion(
     f"model/{model}/lidar.backbone.xyz.onnx",
     f"model/{model}/build/fuser.plan",
     f"model/{model}/build/head.bbox.plan",
-    precision
+    precision,
+    profile
 )
 
 if core is None:
@@ -76,7 +82,7 @@ core.update(
 )
 
 # while True:
-boxes = core.forward(images, points, with_normalization=True, with_dlpack=False)
+boxes = core.forward(images, points, with_normalization=with_normalization, with_dlpack=False)
 
 np.set_printoptions(3, suppress=True, linewidth=300)
 print(boxes[:10])

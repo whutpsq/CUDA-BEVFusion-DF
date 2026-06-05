@@ -29,18 +29,112 @@ warnings.filterwarnings("ignore")
 
 from tqdm import tqdm
 from typing import Callable
-from absl import logging as quant_logging
+try:
+    from absl import logging as quant_logging
+except ModuleNotFoundError:
+    class _DummyQuantLogging:
+        ERROR = "ERROR"
+
+        @staticmethod
+        def set_verbosity(*args, **kwargs):
+            pass
+
+    quant_logging = _DummyQuantLogging()
 
 from torch.cuda import amp
 from torch.nn.parameter import Parameter
-from pytorch_quantization import nn as quant_nn
-from pytorch_quantization.nn.modules import _utils as quant_nn_utils
-from pytorch_quantization import calib
-from pytorch_quantization import tensor_quant
-from pytorch_quantization import quant_modules
-from pytorch_quantization.tensor_quant import QuantDescriptor
 from mmdet3d.ops import spconv, SparseBasicBlock
 import mmcv.cnn.bricks.wrappers
+
+try:
+    from pytorch_quantization import nn as quant_nn
+    from pytorch_quantization.nn.modules import _utils as quant_nn_utils
+    from pytorch_quantization import calib
+    from pytorch_quantization import tensor_quant
+    from pytorch_quantization import quant_modules
+    from pytorch_quantization.tensor_quant import QuantDescriptor
+except ModuleNotFoundError:
+    class _DummyCalibrator:
+        _torch_hist = False
+
+    class _DummyTensorQuantizer(nn.Module):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self._calibrator = _DummyCalibrator()
+            self._disabled = False
+            self.amax = torch.tensor(1.0)
+
+        def forward(self, x):
+            return x
+
+        def disable_quant(self):
+            pass
+
+        def enable_calib(self):
+            pass
+
+        def enable_quant(self):
+            pass
+
+        def disable_calib(self):
+            pass
+
+        def disable(self):
+            self._disabled = True
+
+        def enable(self):
+            self._disabled = False
+
+        def load_calib_amax(self, *args, **kwargs):
+            pass
+
+    class _DummyQuantMixin:
+        def init_quantizer(self, *args, **kwargs):
+            self._input_quantizer = _DummyTensorQuantizer()
+            self._weight_quantizer = _DummyTensorQuantizer()
+
+    class _DummyQuantModule(nn.Module):
+        default_quant_desc_input = None
+
+        @classmethod
+        def set_default_quant_desc_input(cls, *args, **kwargs):
+            pass
+
+    class _DummyQuantNN:
+        TensorQuantizer = _DummyTensorQuantizer
+        QuantConv2d = _DummyQuantModule
+        QuantConvTranspose2d = _DummyQuantModule
+
+    class _DummyQuantNNUtils:
+        QuantMixin = _DummyQuantMixin
+        QuantInputMixin = _DummyQuantMixin
+
+        @staticmethod
+        def pop_quant_desc_in_kwargs(*args, **kwargs):
+            return None, None
+
+    class _DummyTensorQuant:
+        class QuantDescriptor:
+            def __init__(self, *args, **kwargs):
+                pass
+
+    class _DummyCalib:
+        HistogramCalibrator = _DummyCalibrator
+        MaxCalibrator = _DummyCalibrator
+
+    class _DummyQuantModules:
+        _DEFAULT_QUANT_MAP = []
+
+        @staticmethod
+        def _quant_entry(*args, **kwargs):
+            return None
+
+    quant_nn = _DummyQuantNN()
+    quant_nn_utils = _DummyQuantNNUtils()
+    calib = _DummyCalib()
+    tensor_quant = _DummyTensorQuant()
+    quant_modules = _DummyQuantModules()
+    QuantDescriptor = tensor_quant.QuantDescriptor
 
 class QuantConcat(torch.nn.Module):
     def __init__(self, quantization =True):
