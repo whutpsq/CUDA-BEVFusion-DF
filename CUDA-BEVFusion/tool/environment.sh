@@ -22,9 +22,18 @@
 
 # export CUDA_VISIBLE_DEVICES=2
 
-export TensorRT_Lib=/data/gz_data/3rdParty/TensorRT-8.6.1.6/lib
-export TensorRT_Inc=/data/gz_data/3rdParty/TensorRT-8.6.1.6/include
-export TensorRT_Bin=/data/gz_data/3rdParty/TensorRT-8.6.1.6/bin
+#export TensorRT_Lib=/data/gz_data/3rdParty/TensorRT-8.6.1.6/lib
+#export TensorRT_Inc=/data/gz_data/3rdParty/TensorRT-8.6.1.6/include
+#export TensorRT_Bin=/data/gz_data/3rdParty/TensorRT-8.6.1.6/bin
+
+
+#export TensorRT_Lib=/data1/psq/TensorRT-8.5.1.7/lib
+#export TensorRT_Inc=/data1/psq/TensorRT-8.5.1.7/include
+#export TensorRT_Bin=/data1/psq/TensorRT-8.5.1.7/bin
+
+export TensorRT_Lib=/workspace/TensorRT-8.5.1.7/lib
+export TensorRT_Inc=/workspace/TensorRT-8.5.1.7/include
+export TensorRT_Bin=/workspace/TensorRT-8.5.1.7/bin
 
 export CUDA_HOME=/usr/local/cuda-11.1
 export CUDA_Lib=$CUDA_HOME/lib64
