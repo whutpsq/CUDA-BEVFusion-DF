@@ -68,15 +68,45 @@ nv::Tensor convert_to(py::array& array) {
   return nv::Tensor::from_data_reference((void*)array.data(), shape, nvdtype, false);
 }
 
+static int infer_dlpack_point_count(const DLManagedTensor* tensor, int point_dim = 5) {
+  if (tensor == nullptr || tensor->dl_tensor.shape == nullptr || tensor->dl_tensor.ndim <= 0) {
+    return 0;
+  }
+
+  const auto& shape = tensor->dl_tensor.shape;
+  const int ndim = tensor->dl_tensor.ndim;
+
+  // Common point-cloud layouts are [N, C] or [1, N, C]. Fall back to the first
+  // dimension when the layout is already flattened.
+  if (ndim == 1) {
+    if (shape[0] % point_dim != 0) {
+      return static_cast<int>(shape[0]);
+    }
+    return static_cast<int>(shape[0] / point_dim);
+  }
+  if (ndim == 2) {
+    return static_cast<int>(shape[0]);
+  }
+  if (shape[0] == 1) {
+    size_t count = 1;
+    for (int i = 1; i < ndim - 1; ++i) {
+      count *= static_cast<size_t>(shape[i]);
+    }
+    return static_cast<int>(count);
+  }
+  return static_cast<int>(shape[0]);
+}
+
 class BEVFusion {
  public:
   std::shared_ptr<bevfusion::Core> core_;
   cudaStream_t stream_ = nullptr;
 
   static std::shared_ptr<BEVFusion> load_instance(string camera, string vtransform, string lidar, string fuser, string headbbox,
-                                                  string precision, string profile) {
+                                                  string precision, string profile, string mapseg, string map_input,
+                                                  string map_output) {
     std::shared_ptr<BEVFusion> instance(new BEVFusion());
-    if (!instance->load(camera, vtransform, lidar, fuser, headbbox, precision, profile)) {
+    if (!instance->load(camera, vtransform, lidar, fuser, headbbox, precision, profile, mapseg, map_input, map_output)) {
       instance.reset();
     }
     return instance;
@@ -86,7 +116,8 @@ class BEVFusion {
     if (stream_) checkRuntime(cudaStreamDestroy(stream_));
   }
 
-  bool load(string camera, string vtransform, string lidar, string fuser, string headbbox, string precision, string profile) {
+  bool load(string camera, string vtransform, string lidar, string fuser, string headbbox, string precision, string profile,
+            string mapseg, string map_input, string map_output) {
     bool is_bevfusion_df = profile == "bevfusion_df";
 
     bevfusion::camera::NormalizationParameter normalization;
@@ -154,6 +185,9 @@ class BEVFusion {
     param.transfusion = fuser;
     param.transbbox = transbbox;
     param.camera_vtransform = vtransform;
+    param.mapseg.model = mapseg;
+    param.mapseg.input = map_input;
+    param.mapseg.output = map_output;
     core_ = bevfusion::create_core(param);
     if (core_ == nullptr) return false;
 
@@ -207,8 +241,10 @@ class BEVFusion {
 
     nvtype::half* camera_images = static_cast<nvtype::half*>(memory_ptr_images);
     nvtype::half* lidar_points = static_cast<nvtype::half*>(memory_ptr_points);
+    int num_points = infer_dlpack_point_count(dl_managed_points);
+    Assertf(num_points > 0, "Failed to infer point count from DLPack input");
 
-    auto bboxes = core_->forward_no_normalize(camera_images, lidar_points, 242180, stream_);
+    auto bboxes = core_->forward_no_normalize(camera_images, lidar_points, num_points, stream_);
     nv::Tensor output(std::vector<int>{static_cast<int>(bboxes.size()), 11}, nv::DataType::Float32, false);
     for (size_t i = 0; i < bboxes.size(); ++i) {
       auto& box = bboxes[i];
@@ -257,15 +293,30 @@ class BEVFusion {
       }
     }
   }
+
+  py::array forward_map_without_normalization(py::array images, py::array points) {
+    auto t_points = convert_to(points);
+    auto t_images = convert_to(images);
+    t_images.to_device_();
+    t_images = t_images.to_half();
+
+    auto output = core_->forward_map_no_normalize(t_images.ptr<nvtype::half>(), t_points.ptr<nvtype::half>(), t_points.size(0), stream_);
+    std::vector<ssize_t> shape(output.shape.begin(), output.shape.end());
+    py::array_t<float> array(shape);
+    memcpy(array.mutable_data(), output.data.data(), output.data.size() * sizeof(float));
+    return array;
+  }
 };
 
 PYBIND11_MODULE(libpybev, m) {
   py::class_<BEVFusion, shared_ptr<BEVFusion>>(m, "BEVFusion")
       .def("forward", &BEVFusion::forward, py::arg("images"), py::arg("points"), py::arg("with_normalization")=true, py::arg("with_dlpack")=false)
+      .def("forward_map", &BEVFusion::forward_map_without_normalization, py::arg("images"), py::arg("points"))
       .def("print", &BEVFusion::print)
       .def("update", &BEVFusion::update);
 
   m.def("load_bevfusion", BEVFusion::load_instance, py::arg("camera"), py::arg("vtransform"), py::arg("lidar"),
-        py::arg("fuser"), py::arg("headbbox"), py::arg("precision"), py::arg("profile") = "default");
+        py::arg("fuser"), py::arg("headbbox"), py::arg("precision"), py::arg("profile") = "default", py::arg("mapseg") = "",
+        py::arg("map_input") = "middle", py::arg("map_output") = "map");
   dlopen("libcustom_layernorm.so", RTLD_NOW);
 };

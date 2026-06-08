@@ -105,9 +105,13 @@ class BEVPoolImplement : public BEVPool {
 
     int thread_x = C / tile_size;
     int thread_y = 1024 / thread_x;
+    checkRuntime(cudaMemsetAsync(output_feature_, 0x00, volumn_output_ * sizeof(half), _stream));
+    if (num_intervals == 0) {
+      return reinterpret_cast<nvtype::half*>(output_feature_);
+    }
+
     dim3 threads(thread_x, thread_y);
     dim3 blocks(1, int((num_intervals + thread_y - 1) / thread_y));
-    checkRuntime(cudaMemsetAsync(output_feature_, 0x00, volumn_output_ * sizeof(half), _stream));
     checkKernel(bevpool_half_pack10_kernel<<<blocks, threads, 0, _stream>>>(
         reinterpret_cast<const half*>(camera_feature), reinterpret_cast<const half*>(depth_weights), C,
         reinterpret_cast<const int3*>(intervals), num_intervals, indices, bev_height_, bev_width_, D, W * H, output_feature_));

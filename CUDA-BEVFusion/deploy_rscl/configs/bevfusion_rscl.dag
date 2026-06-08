@@ -1,0 +1,2 @@
+bash_script_config:
+  command: "cd /opt/CUDA-BEVFusion && python3 -m deploy_rscl.rscl_node --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml"

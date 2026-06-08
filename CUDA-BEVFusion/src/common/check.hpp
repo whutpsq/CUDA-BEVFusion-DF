@@ -63,7 +63,7 @@ namespace nv {
 #define Assertf(cond, fmt, ...)                                                                                         \
   do {                                                                                                                  \
     if (!(cond)) {                                                                                                      \
-      fprintf(stderr, "Assert failed 💀. %s in file %s:%d, message: " fmt "\n", #cond, __FILE__, __LINE__, __VA_ARGS__); \
+      fprintf(stderr, "Assert failed 💀. %s in file %s:%d, message: " fmt "\n", #cond, __FILE__, __LINE__, ##__VA_ARGS__); \
       abort();                                                                                                          \
     }                                                                                                                   \
   } while (false)

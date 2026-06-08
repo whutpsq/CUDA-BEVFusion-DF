@@ -20,6 +20,9 @@
 # DEALINGS IN THE SOFTWARE.
 
 import os
+from pathlib import Path
+from typing import List
+
 import cv2
 import numpy as np
 import tensor
@@ -39,25 +42,6 @@ image_names = [
     "5-BACK_RIGHT.jpg"
 ]
 
-images_tensor_file = f"{data}/images.tensor"
-with_normalization = not os.path.exists(images_tensor_file)
-if with_normalization:
-    images = []
-    for file in image_names:
-        if(file.endswith(".jpg")):
-            image = cv2.imread(f"{data}/{file}")
-            image = image[..., ::-1]
-            images.append(image)
-    images = np.stack(images, axis=0)[None]
-else:
-    images = tensor.load(images_tensor_file)
-
-camera_intrinsics = tensor.load(f"{data}/camera_intrinsics.tensor")
-camera2lidar = tensor.load(f"{data}/camera2lidar.tensor")
-lidar2image = tensor.load(f"{data}/lidar2image.tensor")
-img_aug_matrix = tensor.load(f"{data}/img_aug_matrix.tensor")
-points = tensor.load(f"{data}/points.tensor")
-
 core = libpybev.load_bevfusion(
     f"model/{model}/build/camera.backbone.plan",
     f"model/{model}/build/camera.vtransform.plan",
@@ -74,15 +58,47 @@ if core is None:
 
 core.print()
 
-core.update(
-    camera2lidar,
-    camera_intrinsics,
-    lidar2image,
-    img_aug_matrix
-)
+def collect_frame_roots(root: str) -> List[str]:
+    root_path = Path(root)
+    if (root_path / "points.tensor").exists() or (root_path / "images.tensor").exists():
+        return [str(root_path)]
+    frames = [str(path) for path in sorted(root_path.iterdir()) if path.is_dir() and (path / "points.tensor").exists()]
+    return frames or [str(root_path)]
 
-# while True:
-boxes = core.forward(images, points, with_normalization=with_normalization, with_dlpack=False)
 
-np.set_printoptions(3, suppress=True, linewidth=300)
-print(boxes[:10])
+def run_one_frame(frame_root: str):
+    images_tensor_file = f"{frame_root}/images.tensor"
+    with_normalization = not os.path.exists(images_tensor_file)
+    if with_normalization:
+        images = []
+        for file in image_names:
+            if file.endswith(".jpg"):
+                image = cv2.imread(f"{frame_root}/{file}")
+                image = image[..., ::-1]
+                images.append(image)
+        images = np.stack(images, axis=0)[None]
+    else:
+        images = tensor.load(images_tensor_file)
+
+    camera_intrinsics = tensor.load(f"{frame_root}/camera_intrinsics.tensor")
+    camera2lidar = tensor.load(f"{frame_root}/camera2lidar.tensor")
+    lidar2image = tensor.load(f"{frame_root}/lidar2image.tensor")
+    img_aug_matrix = tensor.load(f"{frame_root}/img_aug_matrix.tensor")
+    points = tensor.load(f"{frame_root}/points.tensor")
+
+    core.update(
+        camera2lidar,
+        camera_intrinsics,
+        lidar2image,
+        img_aug_matrix
+    )
+    return core.forward(images, points, with_normalization=with_normalization, with_dlpack=False)
+
+
+frame_roots = collect_frame_roots(data)
+for frame_index, frame_root in enumerate(frame_roots):
+    boxes = run_one_frame(frame_root)
+    np.set_printoptions(3, suppress=True, linewidth=300)
+    if len(frame_roots) > 1:
+        print(f"[Frame {frame_index:04d}] {frame_root}")
+    print(boxes[:10])

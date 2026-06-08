@@ -63,10 +63,20 @@ class CoreImplement : public Core {
       return false;
     }
 
-    transbbox_ = head::transbbox::create_transbbox(param.transbbox);
-    if (transbbox_ == nullptr) {
-      printf("Failed to create head transbbox.\n");
-      return false;
+    if (!param.transbbox.model.empty()) {
+      transbbox_ = head::transbbox::create_transbbox(param.transbbox);
+      if (transbbox_ == nullptr) {
+        printf("Failed to create head transbbox.\n");
+        return false;
+      }
+    }
+
+    if (!param.mapseg.model.empty()) {
+      mapseg_ = head::map::create_mapseg(param.mapseg);
+      if (mapseg_ == nullptr) {
+        printf("Failed to create head mapseg.\n");
+        return false;
+      }
     }
 
     lidar_scn_ = lidar::create_scn(param.lidar_scn);
@@ -101,8 +111,8 @@ class CoreImplement : public Core {
     return true;
   }
 
-  std::vector<head::transbbox::BoundingBox> forward_only(const void* camera_images, const nvtype::half* lidar_points,
-                                                         int num_points, void* stream, bool do_normalization) {
+  const nvtype::half* forward_fusion_feature(const void* camera_images, const nvtype::half* lidar_points, int num_points,
+                                             void* stream, bool do_normalization) {
     int cappoints = static_cast<int>(capacity_points_);
     if (num_points > cappoints) {
       printf("If it exceeds %d points, the default processing will simply crop it out.\n", cappoints);
@@ -129,6 +139,13 @@ class CoreImplement : public Core {
 
     const nvtype::half* camera_bevfeat = camera_vtransform_->forward(camera_bev, stream);
     const nvtype::half* fusion_feature = this->transfusion_->forward(camera_bevfeat, lidar_feature, stream);
+    return fusion_feature;
+  }
+
+  std::vector<head::transbbox::BoundingBox> forward_only(const void* camera_images, const nvtype::half* lidar_points,
+                                                         int num_points, void* stream, bool do_normalization) {
+    const nvtype::half* fusion_feature = forward_fusion_feature(camera_images, lidar_points, num_points, stream, do_normalization);
+    Asserts(transbbox_ != nullptr, "Object detection head is not loaded.");
     return this->transbbox_->forward(fusion_feature, param_.transbbox.confidence_threshold, stream,
                                      param_.transbbox.sorted_bboxes);
   }
@@ -215,13 +232,22 @@ class CoreImplement : public Core {
     }
   }
 
+  virtual head::map::MapOutput forward_map_no_normalize(const nvtype::half* camera_normed_images_device,
+                                                        const nvtype::half* lidar_points, int num_points,
+                                                        void* stream) override {
+    Asserts(mapseg_ != nullptr, "Map segmentation head is not loaded.");
+    const nvtype::half* fusion_feature = forward_fusion_feature(camera_normed_images_device, lidar_points, num_points, stream, false);
+    return mapseg_->forward(fusion_feature, stream);
+  }
+
   virtual void set_timer(bool enable) override { enable_timer_ = enable; }
 
   virtual void print() override {
     camera_backbone_->print();
     camera_vtransform_->print();
     transfusion_->print();
-    transbbox_->print();
+    if (transbbox_) transbbox_->print();
+    if (mapseg_) mapseg_->print();
   }
 
   virtual void update(const float* camera2lidar, const float* camera_intrinsics, const float* lidar2image,
@@ -249,6 +275,7 @@ class CoreImplement : public Core {
   std::shared_ptr<lidar::SCN> lidar_scn_;
   std::shared_ptr<fuser::Transfusion> transfusion_;
   std::shared_ptr<head::transbbox::TransBBox> transbbox_;
+  std::shared_ptr<head::map::MapSeg> mapseg_;
   float confidence_threshold_ = 0;
   bool enable_timer_ = false;
 };

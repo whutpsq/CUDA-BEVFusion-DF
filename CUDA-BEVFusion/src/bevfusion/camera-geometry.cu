@@ -245,6 +245,12 @@ class GeometryImplement : public Geometry {
     thrust::stable_sort_by_key(thrust::cuda::par.on(_stream), ranks_, ranks_ + numel_geometry_, indices_, thrust::less<int>());
     checkRuntime(cudaStreamSynchronize(_stream));
 
+    if (*counter_host_ <= 1) {
+      n_intervals_ = 0;
+      printf("Warning: camera geometry produced %u valid frustum points. Check camera calibration matrices.\n", *counter_host_);
+      return;
+    }
+
     unsigned int remain_ranks = numel_geometry_ - *counter_host_;
     unsigned int threads = *counter_host_ - 1;
     checkRuntime(cudaMemsetAsync(interval_starts_size_, 0, sizeof(int32_t), _stream));

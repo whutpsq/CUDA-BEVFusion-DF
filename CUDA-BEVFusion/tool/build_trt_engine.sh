@@ -139,6 +139,19 @@ compile_trt_model "fuser" "$trtexec_dynamic_flags" 2 1
 # fp16 only
 compile_trt_model "camera.vtransform" "$trtexec_fp16_flags" 1 1
 
-# head.bbox uses nv::CustomLayerNormalization and must load the TensorRT plugin.
-ensure_custom_layernorm_plugin
-compile_trt_model "head.bbox" "$trtexec_fp16_flags" 1 6 "--plugins=libcustom_layernorm.so"
+# Optional object detection head. head.bbox uses nv::CustomLayerNormalization
+# and must load the TensorRT plugin when present.
+if [ -f "$base/head.bbox.onnx" ]; then
+    ensure_custom_layernorm_plugin
+    compile_trt_model "head.bbox" "$trtexec_fp16_flags" 1 6 "--plugins=libcustom_layernorm.so"
+else
+    echo Optional object detection model $base/head.bbox.onnx not found. Skip head.bbox.plan.
+fi
+
+# Optional BEV map segmentation head. The exported ONNX is expected to take the
+# fused BEV tensor binding "middle" and output a sigmoid probability map.
+if [ -f "$base/head.map.onnx" ]; then
+    compile_trt_model "head.map" "$trtexec_fp16_flags" 1 1
+else
+    echo Optional map segmentation model $base/head.map.onnx not found. Skip head.map.plan.
+fi

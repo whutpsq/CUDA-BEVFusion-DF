@@ -31,6 +31,7 @@
 #include "camera-normalization.hpp"
 #include "camera-vtransform.hpp"
 #include "head-transbbox.hpp"
+#include "head-map.hpp"
 #include "lidar-scn.hpp"
 #include "transfusion.hpp"
 
@@ -44,6 +45,7 @@ struct CoreParameter {
   lidar::SCNParameter lidar_scn;
   std::string transfusion;
   head::transbbox::TransBBoxParameter transbbox;
+  head::map::MapParameter mapseg;
 };
 
 class Core {
@@ -55,6 +57,9 @@ class Core {
   virtual std::vector<head::transbbox::BoundingBox> forward_no_normalize(const nvtype::half *camera_normed_images_device,
                                                                          const nvtype::half *lidar_points, int num_points,
                                                                          void *stream) = 0;
+
+  virtual head::map::MapOutput forward_map_no_normalize(const nvtype::half *camera_normed_images_device,
+                                                        const nvtype::half *lidar_points, int num_points, void *stream) = 0;
 
   virtual void print() = 0;
   virtual void set_timer(bool enable) = 0;

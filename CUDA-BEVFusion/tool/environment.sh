@@ -57,14 +57,14 @@ export CUDNN_Lib=$CUDA_HOME/lib64
 # For CUDA-12.x:    SPCONV_CUDA_VERSION=12.6
 export SPCONV_CUDA_VERSION=11.4
 
-# resnet50/resnet50int8/swint
-export DEBUG_MODEL=bevfusion_df
+# resnet50/resnet50int8/swint/bevfusion_df
+export DEBUG_MODEL=bevfusion_df_seg
 export DEBUG_PROFILE=bevfusion_df
 
 # fp16/int8
 export DEBUG_PRECISION=fp16
 export DEBUG_DATA=dump_df/00000
-export USE_Python=OFF
+export USE_Python=${USE_Python:-OFF}
 
 # check the configuration path
 # clean the configuration status

@@ -22,9 +22,12 @@
  */
 
 #include <cuda_runtime.h>
+#include <algorithm>
 #include <string.h>
 #include <dlfcn.h>
+#include <dirent.h>
 #include <fstream>
+#include <sys/stat.h>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -64,6 +67,39 @@ static void free_images(std::vector<unsigned char*>& images) {
 static bool file_exists(const std::string& path) {
   std::ifstream f(path.c_str());
   return f.good();
+}
+
+static bool directory_exists(const std::string& path) {
+  struct stat info;
+  return stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+static std::vector<std::string> collect_frame_roots(const std::string& root) {
+  std::vector<std::string> frames;
+  if (file_exists(root + "/points.tensor") || file_exists(root + "/images.tensor")) {
+    frames.push_back(root);
+    return frames;
+  }
+
+  DIR* dir = opendir(root.c_str());
+  if (dir == nullptr) {
+    frames.push_back(root);
+    return frames;
+  }
+
+  struct dirent* entry = nullptr;
+  while ((entry = readdir(dir)) != nullptr) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+    std::string child = nv::format("%s/%s", root.c_str(), entry->d_name);
+    if (directory_exists(child) && file_exists(child + "/points.tensor")) {
+      frames.push_back(child);
+    }
+  }
+  closedir(dir);
+
+  std::sort(frames.begin(), frames.end());
+  if (frames.empty()) frames.push_back(root);
+  return frames;
 }
 
 static void visualize(const std::vector<bevfusion::head::transbbox::BoundingBox>& bboxes, const nv::Tensor& lidar_points,
@@ -251,44 +287,58 @@ int main(int argc, char** argv) {
   core->set_timer(true);
 
   // Load matrix to host
-  auto camera2lidar = nv::Tensor::load(nv::format("%s/camera2lidar.tensor", data), false);
-  auto camera_intrinsics = nv::Tensor::load(nv::format("%s/camera_intrinsics.tensor", data), false);
-  auto lidar2image = nv::Tensor::load(nv::format("%s/lidar2image.tensor", data), false);
-  auto img_aug_matrix = nv::Tensor::load(nv::format("%s/img_aug_matrix.tensor", data), false);
-  core->update(camera2lidar.ptr<float>(), camera_intrinsics.ptr<float>(), lidar2image.ptr<float>(), img_aug_matrix.ptr<float>(),
-              stream);
-  // core->free_excess_memory();
-
-  // Load image and lidar to host
-  auto lidar_points = nv::Tensor::load(nv::format("%s/points.tensor", data), false);
-  auto images_tensor_path = nv::format("%s/images.tensor", data);
+  auto frame_roots = collect_frame_roots(data);
+  bool continuous_mode = frame_roots.size() > 1;
   std::vector<bevfusion::head::transbbox::BoundingBox> bboxes;
 
-  if (file_exists(images_tensor_path)) {
-    printf("Use preprocessed image tensor: %s\n", images_tensor_path.c_str());
-    auto normed_images = nv::Tensor::load(images_tensor_path, false);
-    bboxes = core->forward_no_normalize(normed_images.ptr<nvtype::half>(), lidar_points.ptr<nvtype::half>(),
-                                        lidar_points.size(0), stream);
+  for (size_t frame_index = 0; frame_index < frame_roots.size(); ++frame_index) {
+    const std::string& frame_root = frame_roots[frame_index];
 
-    for (int i = 0; i < 5; ++i) {
-      core->forward_no_normalize(normed_images.ptr<nvtype::half>(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
-                                 stream);
-    }
-    printf("Skip visualization because raw camera images were not used in this path.\n");
-  } else {
-    auto images = load_images(data);
+    auto camera2lidar = nv::Tensor::load(nv::format("%s/camera2lidar.tensor", frame_root.c_str()), false);
+    auto camera_intrinsics = nv::Tensor::load(nv::format("%s/camera_intrinsics.tensor", frame_root.c_str()), false);
+    auto lidar2image = nv::Tensor::load(nv::format("%s/lidar2image.tensor", frame_root.c_str()), false);
+    auto img_aug_matrix = nv::Tensor::load(nv::format("%s/img_aug_matrix.tensor", frame_root.c_str()), false);
+    core->update(camera2lidar.ptr<float>(), camera_intrinsics.ptr<float>(), lidar2image.ptr<float>(),
+                 img_aug_matrix.ptr<float>(), stream);
 
-    // warmup
-    bboxes = core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
+    auto lidar_points = nv::Tensor::load(nv::format("%s/points.tensor", frame_root.c_str()), false);
+    auto images_tensor_path = nv::format("%s/images.tensor", frame_root.c_str());
 
-    // evaluate inference time
-    for (int i = 0; i < 5; ++i) {
-      core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
+    if (continuous_mode) {
+      printf("[Frame %04zu] %s\n", frame_index, frame_root.c_str());
     }
 
-    // visualize and save to jpg
-    visualize(bboxes, lidar_points, images, lidar2image, "build/cuda-bevfusion.jpg", stream);
-    free_images(images);
+    if (file_exists(images_tensor_path)) {
+      auto normed_images = nv::Tensor::load(images_tensor_path, false);
+      bboxes = core->forward_no_normalize(normed_images.ptr<nvtype::half>(), lidar_points.ptr<nvtype::half>(),
+                                          lidar_points.size(0), stream);
+      if (!continuous_mode) {
+        for (int i = 0; i < 5; ++i) {
+          core->forward_no_normalize(normed_images.ptr<nvtype::half>(), lidar_points.ptr<nvtype::half>(),
+                                     lidar_points.size(0), stream);
+        }
+        printf("Skip visualization because raw camera images were not used in this path.\n");
+      } else {
+        printf("  detections=%zu (preprocessed images)\n", bboxes.size());
+      }
+    } else {
+      auto images = load_images(frame_root);
+
+      bboxes = core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
+                             stream);
+      if (!continuous_mode) {
+        for (int i = 0; i < 5; ++i) {
+          core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
+                       stream);
+        }
+        visualize(bboxes, lidar_points, images, lidar2image, "build/cuda-bevfusion.jpg", stream);
+      } else {
+        auto save_path = nv::format("build/cuda-bevfusion-%05zu.jpg", frame_index);
+        visualize(bboxes, lidar_points, images, lidar2image, save_path, stream);
+        printf("  detections=%zu saved=%s\n", bboxes.size(), save_path.c_str());
+      }
+      free_images(images);
+    }
   }
 
   // destroy memory
