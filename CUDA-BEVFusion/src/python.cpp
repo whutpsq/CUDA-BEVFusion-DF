@@ -121,10 +121,10 @@ class BEVFusion {
     bool is_bevfusion_df = profile == "bevfusion_df";
 
     bevfusion::camera::NormalizationParameter normalization;
-    normalization.image_width = is_bevfusion_df ? 3840 : 1600;
-    normalization.image_height = is_bevfusion_df ? 2160 : 900;
-    normalization.output_width = is_bevfusion_df ? 352 : 704;
-    normalization.output_height = is_bevfusion_df ? 128 : 256;
+    normalization.image_width = is_bevfusion_df ? 1920 : 1600;
+    normalization.image_height = is_bevfusion_df ? 1080 : 900;
+    normalization.output_width = 704;
+    normalization.output_height = 256;
     normalization.num_camera = 6;
     normalization.resize_lim = 0.48f;
     normalization.interpolation = bevfusion::camera::Interpolation::Bilinear;
@@ -160,10 +160,10 @@ class BEVFusion {
     geometry.ybound = is_bevfusion_df ? nvtype::Float3(-51.2f, 51.2f, 0.8f) : nvtype::Float3(-54.0f, 54.0f, 0.3f);
     geometry.zbound = nvtype::Float3(-10.0f, 10.0f, 20.0f);
     geometry.dbound = nvtype::Float3(1.0, 60.0f, 0.5f);
-    geometry.image_width = is_bevfusion_df ? 352 : 704;
-    geometry.image_height = is_bevfusion_df ? 128 : 256;
-    geometry.feat_width = is_bevfusion_df ? 44 : 88;
-    geometry.feat_height = is_bevfusion_df ? 16 : 32;
+    geometry.image_width = 704;
+    geometry.image_height = 256;
+    geometry.feat_width = 88;
+    geometry.feat_height = 32;
     geometry.num_camera = 6;
     geometry.geometry_dim = is_bevfusion_df ? nvtype::Int3(128, 128, 80) : nvtype::Int3(360, 360, 80);
 

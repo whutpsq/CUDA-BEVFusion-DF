@@ -78,10 +78,9 @@ __device__ uchar3 load_pixel<Interpolation::Nearest>(const uchar3* image, int x,
   // making the result not exactly match with opencv,
   // so here you need to add eps as precision compensation
   //
-  // A special case is when the input is 3840 and the output is 446, x = 223:
-  // const int src_x_double = 223.0  * (3840.0  / 446.0);            // -> 1920
-  // const int src_x_float  = 223.0f * (3840.0f / 446.0f);           // -> 1919
-  // const int src_x_float  = 223.0f * (3840.0f / 446.0f) + 1e-5;    // -> 1920
+  // Some scale ratios differ by one pixel between float and double arithmetic.
+  // Keep a small epsilon so coordinates that should land exactly on an integer
+  // do not shift left/up after truncation.
   //
   // !!! If you want to use the double for sx/sy, you'll get a 2x speed drop
   const float eps = 1e-5;

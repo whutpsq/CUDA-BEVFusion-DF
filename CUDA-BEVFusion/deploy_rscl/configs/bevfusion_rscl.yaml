@@ -59,7 +59,7 @@ sync_tolerance_ms: 50.0
 score_threshold: 0.2
 publish_empty_frame: true
 
-image_size: [128, 352]
+image_size: [256, 704]
 image_resize: 0.48
 image_mean: [0.485, 0.456, 0.406]
 image_std: [0.229, 0.224, 0.225]

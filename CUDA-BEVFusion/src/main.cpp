@@ -42,24 +42,39 @@
 #include "common/timer.hpp"
 #include "common/visualize.hpp"
 
-static std::vector<unsigned char*> load_images(const std::string& root) {
+struct ImageData {
+  unsigned char* data = nullptr;
+  int width = 0;
+  int height = 0;
+  int channels = 0;
+};
+
+static std::vector<ImageData> load_images(const std::string& root) {
   const char* file_names[] = {"0-FRONT.jpg", "1-FRONT_RIGHT.jpg", "2-FRONT_LEFT.jpg",
                               "3-BACK.jpg",  "4-BACK_LEFT.jpg",   "5-BACK_RIGHT.jpg"};
 
-  std::vector<unsigned char*> images;
+  std::vector<ImageData> images;
   for (int i = 0; i < 6; ++i) {
     char path[200];
     sprintf(path, "%s/%s", root.c_str(), file_names[i]);
 
-    int width, height, channels;
-    images.push_back(stbi_load(path, &width, &height, &channels, 0));
-    // printf("Image info[%d]: %d x %d : %d\n", i, width, height, channels);
+    ImageData image;
+    image.data = stbi_load(path, &image.width, &image.height, &image.channels, 3);
+    image.channels = 3;
+    images.push_back(image);
+    // printf("Image info[%d]: %d x %d : %d\n", i, image.width, image.height, image.channels);
   }
   return images;
 }
 
-static void free_images(std::vector<unsigned char*>& images) {
-  for (size_t i = 0; i < images.size(); ++i) stbi_image_free(images[i]);
+static std::vector<unsigned char*> image_pointers(const std::vector<ImageData>& images) {
+  std::vector<unsigned char*> pointers(images.size());
+  for (size_t i = 0; i < images.size(); ++i) pointers[i] = images[i].data;
+  return pointers;
+}
+
+static void free_images(std::vector<ImageData>& images) {
+  for (size_t i = 0; i < images.size(); ++i) stbi_image_free(images[i].data);
 
   images.clear();
 }
@@ -103,7 +118,7 @@ static std::vector<std::string> collect_frame_roots(const std::string& root) {
 }
 
 static void visualize(const std::vector<bevfusion::head::transbbox::BoundingBox>& bboxes, const nv::Tensor& lidar_points,
-                      const std::vector<unsigned char*> images, const nv::Tensor& lidar2image, const std::string& save_path,
+                      const std::vector<ImageData>& images, const nv::Tensor& lidar2image, const std::string& save_path,
                       cudaStream_t stream) {
   std::vector<nv::Prediction> predictions(bboxes.size());
   memcpy(predictions.data(), bboxes.data(), bboxes.size() * sizeof(nv::Prediction));
@@ -141,8 +156,8 @@ static void visualize(const std::vector<bevfusion::head::transbbox::BoundingBox>
 
   nv::ImageArtistParameter image_artist_param;
   image_artist_param.num_camera = images.size();
-  image_artist_param.image_width = 1600;
-  image_artist_param.image_height = 900;
+  image_artist_param.image_width = images.empty() ? 0 : images[0].width;
+  image_artist_param.image_height = images.empty() ? 0 : images[0].height;
   image_artist_param.image_stride = image_artist_param.image_width * 3;
   image_artist_param.viewport_nx4x4.resize(images.size() * 4 * 4);
   memcpy(image_artist_param.viewport_nx4x4.data(), lidar2image.ptr<float>(),
@@ -166,8 +181,9 @@ static void visualize(const std::vector<bevfusion::head::transbbox::BoundingBox>
     bool xflip = static_cast<bool>(offset_cameras[icamera][2]);
     visualizer->draw_prediction(icamera, predictions, xflip);
 
-    nv::Tensor device_image(std::vector<int>{900, 1600, 3}, nv::DataType::UInt8);
-    device_image.copy_from_host(images[icamera], stream);
+    const auto& host_image = images[icamera];
+    nv::Tensor device_image(std::vector<int>{host_image.height, host_image.width, 3}, nv::DataType::UInt8);
+    device_image.copy_from_host(host_image.data, stream);
 
     if (xflip) {
       auto clone = device_image.clone(stream);
@@ -193,10 +209,10 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
   bool is_bevfusion_df = model == "bevfusion_df";
 
   bevfusion::camera::NormalizationParameter normalization;
-  normalization.image_width = is_bevfusion_df ? 3840 : 1600;
-  normalization.image_height = is_bevfusion_df ? 2160 : 900;
-  normalization.output_width = is_bevfusion_df ? 352 : 704;
-  normalization.output_height = is_bevfusion_df ? 128 : 256;
+  normalization.image_width = is_bevfusion_df ? 1920 : 1600;
+  normalization.image_height = is_bevfusion_df ? 1080 : 900;
+  normalization.output_width = 704;
+  normalization.output_height = 256;
   normalization.num_camera = 6;
   normalization.resize_lim = 0.48f;
   normalization.interpolation = bevfusion::camera::Interpolation::Bilinear;
@@ -232,10 +248,10 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
   geometry.ybound = is_bevfusion_df ? nvtype::Float3(-51.2f, 51.2f, 0.8f) : nvtype::Float3(-54.0f, 54.0f, 0.3f);
   geometry.zbound = nvtype::Float3(-10.0f, 10.0f, 20.0f);
   geometry.dbound = nvtype::Float3(1.0, 60.0f, 0.5f);
-  geometry.image_width = is_bevfusion_df ? 352 : 704;
-  geometry.image_height = is_bevfusion_df ? 128 : 256;
-  geometry.feat_width = is_bevfusion_df ? 44 : 88;
-  geometry.feat_height = is_bevfusion_df ? 16 : 32;
+  geometry.image_width = 704;
+  geometry.image_height = 256;
+  geometry.feat_width = 88;
+  geometry.feat_height = 32;
   geometry.num_camera = 6;
   geometry.geometry_dim = is_bevfusion_df ? nvtype::Int3(128, 128, 80) : nvtype::Int3(360, 360, 80);
 
@@ -323,12 +339,13 @@ int main(int argc, char** argv) {
       }
     } else {
       auto images = load_images(frame_root);
+      auto image_ptrs = image_pointers(images);
 
-      bboxes = core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
+      bboxes = core->forward((const unsigned char**)image_ptrs.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
                              stream);
       if (!continuous_mode) {
         for (int i = 0; i < 5; ++i) {
-          core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
+          core->forward((const unsigned char**)image_ptrs.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0),
                        stream);
         }
         visualize(bboxes, lidar_points, images, lidar2image, "build/cuda-bevfusion.jpg", stream);

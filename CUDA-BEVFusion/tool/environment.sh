@@ -57,8 +57,8 @@ export CUDNN_Lib=$CUDA_HOME/lib64
 # For CUDA-12.x:    SPCONV_CUDA_VERSION=12.6
 export SPCONV_CUDA_VERSION=11.4
 
-# resnet50/resnet50int8/swint/bevfusion_df
-export DEBUG_MODEL=bevfusion_df_seg
+# resnet50/resnet50int8/swint/bevfusion_df/bevfusion_df_seg
+export DEBUG_MODEL=bevfusion_df
 export DEBUG_PROFILE=bevfusion_df
 
 # fp16/int8

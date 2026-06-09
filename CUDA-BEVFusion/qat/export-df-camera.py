@@ -45,7 +45,7 @@ class SubclassCameraModule(nn.Module):
 
 def parse_args():
     parser = argparse.ArgumentParser("Export bevfusion_df camera ONNX")
-    parser.add_argument("--bevfusion-root", default=os.environ.get("BEVFUSION_DF_ROOT", r"H:\df_code\bevfusion"))
+    parser.add_argument("--bevfusion-root", default=os.environ.get("BEVFUSION_DF_ROOT", r"/data1/psq/CUDA-BEVFusion/bevfusion-df"))
     parser.add_argument("--config", default=r"H:\df_code\bevfusion\configs\custom_dataset\default.yaml")
     parser.add_argument("--ckpt", default=None)
     parser.add_argument("--save-root", default="model/bevfusion_df")
