@@ -55,7 +55,19 @@ camera_order:
 lidar_topic: "/perception/lidar/preproc_points_cloud"
 output_topic: "/perception/bevfusion/objects"
 
-sync_tolerance_ms: 50.0
+# Lidar is the sync anchor. For each lidar timestamp, the runner selects the
+# nearest frame from every camera topic. A synced frame is emitted only when all
+# camera nearest diffs are within this tolerance.
+sync_tolerance_ms: 80.0
+sync_queue_size: 30
+sync_debug: false
+sync_debug_limit: 100
+# Optional timestamp correction before synchronization. camera_time_offsets_ms
+# follows camera_topics order. Negative means the camera timestamp is shifted
+# earlier. For bags where center_camera_fov120 is about 350 ms later than lidar,
+# set the first value to -350.0 and keep a tight sync_tolerance_ms.
+camera_time_offsets_ms: [450, 450, 0, 0, 0, 450]
+lidar_time_offset_ms: 0
 score_threshold: 0.2
 publish_empty_frame: true
 

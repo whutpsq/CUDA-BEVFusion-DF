@@ -301,6 +301,49 @@ Or through mainboard:
 mainboard -d deploy_rscl/configs/bevfusion_rscl.dag
 ```
 
+## C++ Vehicle Adapter
+
+For vehicle targets without Python, build the C++ adapter library:
+
+```bash
+cd /path/to/CUDA-BEVFusion
+mkdir -p build && cd build
+cmake .. -DBUILD_RSCL_CPP=ON
+make -j
+```
+
+This builds `librscl_adapter_cpp.a`, which links directly against
+`bevfusion_core` and does not use `libpybev.so`.
+
+The SDK-neutral C++ code lives under `deploy_rscl/cpp`:
+
+- `rscl_adapter::load_adapter_config`
+- `rscl_adapter::decode_camera_packet`
+- `rscl_adapter::decode_lidar_packet`
+- `rscl_adapter::BevFusionPipeline`
+
+The repository does not include SenseTime RSCL C++ headers, so the online
+vehicle node should keep only the RSCL subscription/publish calls in vehicle
+code and feed decoded packets into `BevFusionPipeline`. See
+`deploy_rscl/cpp/README.md` for the callback skeleton.
+
+For offline continuous-frame rsclbag inference, the C++ entry point is
+`rscl_bevfusion_bag_runner`. It requires a small backend source implementing
+`rscl_adapter::create_rscl_bag_reader` with the vehicle RSCL C++ SDK:
+
+```bash
+cmake .. \
+  -DBUILD_RSCL_CPP=ON \
+  -DRSCL_BAG_BACKEND_SOURCE=/path/to/vehicle_rscl_bag_reader.cpp
+make -j
+
+./build/rscl_bevfusion_bag_runner \
+  --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml \
+  --bag /workspace/mybag.000.rsclbag \
+  --max-frames 20 \
+  --output-file runs/cpp_rscl_outputs.jsonl
+```
+
 ## Calibration
 
 `calibration_file` points to `../../calibration.json` by default, which resolves

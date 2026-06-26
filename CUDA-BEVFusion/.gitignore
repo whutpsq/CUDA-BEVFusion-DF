@@ -12,3 +12,4 @@ __pycache__
 /qat/onnx_int8
 /src/onnx/*.cpp
 /src/onnx/*.h
+/.sdk_cache
