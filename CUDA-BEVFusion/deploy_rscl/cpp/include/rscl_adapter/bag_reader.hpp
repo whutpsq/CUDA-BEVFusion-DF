@@ -10,6 +10,7 @@ namespace rscl_adapter {
 struct BagMessage {
   std::string topic;
   int64_t timestamp_us = 0;
+  int64_t receive_timestamp_us = 0;
   std::vector<unsigned char> payload;
   std::vector<unsigned char> raw_payload;
   std::string message_type;

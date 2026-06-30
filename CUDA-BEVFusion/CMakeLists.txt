@@ -28,8 +28,10 @@ if("${CMAKE_BUILD_PYTHON}" STREQUAL "")
 endif()
 option(BUILD_RSCL_CPP "Build the C++ RSCL adapter core library" ON)
 option(BUILD_RSCL_BAG_RUNNER "Build the C++ rsclbag offline runner" ON)
+option(BUILD_RSCL_ONLINE_NODE "Build the C++ RSCL online inference node" ON)
 option(RSCL_ENABLE_FFMPEG_DECODER "Enable FFmpeg-based H264/H265 camera decoding for the C++ RSCL adapter" ON)
 set(RSCL_BAG_BACKEND_SOURCE "" CACHE STRING "Optional source file implementing rscl_adapter::create_rscl_bag_reader with the vehicle RSCL SDK")
+set(RSCL_ONLINE_BACKEND_SOURCE "" CACHE STRING "Optional source file implementing the dlopen-loaded RSCL online backend")
 set(RSCL_RELEASE_ROOT "" CACHE PATH "Optional 695_x86 release directory or extracted SenseAuto package root")
 set(SENSEAUTO_INSTALL_ROOT "$ENV{SENSEAUTO_INSTALL_ROOT}" CACHE PATH "Optional SenseAuto installed root, for example /opt/senseauto_active")
 set(RSCL_SDK_ROOT "$ENV{RSCL_SDK_ROOT}" CACHE PATH "Optional extracted senseauto-rscl SDK root, ending at opt/senseauto/tmp/senseauto-rscl")
@@ -38,6 +40,7 @@ set(RSCL_MSGS_ROOT "$ENV{RSCL_MSGS_ROOT}" CACHE PATH "Optional extracted senseau
 set(RSCL_SDK_INCLUDE_DIRS "" CACHE STRING "Optional RSCL SDK include directories")
 set(RSCL_SDK_LIBRARY_DIRS "" CACHE STRING "Optional RSCL SDK library directories")
 set(RSCL_SDK_LIBRARIES "" CACHE STRING "Optional RSCL SDK libraries for rscl_bevfusion_bag_runner")
+set(RSCL_ONLINE_SDK_LIBRARIES "" CACHE STRING "Optional RSCL SDK libraries for librscl_online_backend_ad.so")
 set(CMAKE_BUILD_TYPE "Release")
 # set(CMAKE_BUILD_TYPE "Debug")
 set(arch ${CMAKE_HOST_SYSTEM_PROCESSOR})
@@ -367,6 +370,9 @@ set(RSCL_SDK_TARGET_INCLUDE_DIRS ${RSCL_SDK_INCLUDE_DIRS})
 if(NOT "${RSCL_THIRDPARTY_ROOT}" STREQUAL "")
   list(APPEND RSCL_SDK_TARGET_INCLUDE_DIRS "${RSCL_THIRDPARTY_ROOT}/3rdparty/include")
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/ad_rscl/runtime.h")
+  list(APPEND RSCL_SDK_TARGET_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include")
+endif()
 
 set(RSCL_SDK_LINK_LIBRARIES "")
 if(NOT "${RSCL_SDK_LIBRARIES}" STREQUAL "")
@@ -382,6 +388,27 @@ if(NOT "${RSCL_SDK_LIBRARIES}" STREQUAL "")
       list(APPEND RSCL_SDK_LINK_LIBRARIES "${RSCL_${rscl_lib_var}_LIBRARY}")
     else()
       list(APPEND RSCL_SDK_LINK_LIBRARIES "${rscl_lib}")
+    endif()
+  endforeach()
+endif()
+
+if("${RSCL_ONLINE_SDK_LIBRARIES}" STREQUAL "")
+  set(RSCL_ONLINE_SDK_LIBRARIES "ad_rscl;ad_serde;ad_serde_capnp" CACHE STRING "Optional RSCL SDK libraries for librscl_online_backend_ad.so" FORCE)
+endif()
+set(RSCL_ONLINE_SDK_LINK_LIBRARIES "")
+if(NOT "${RSCL_ONLINE_SDK_LIBRARIES}" STREQUAL "")
+  foreach(rscl_lib ${RSCL_ONLINE_SDK_LIBRARIES})
+    string(REPLACE "-" "_" rscl_lib_var "${rscl_lib}")
+    string(TOUPPER "${rscl_lib_var}" rscl_lib_var)
+    find_library(RSCL_ONLINE_${rscl_lib_var}_LIBRARY
+      NAMES ${rscl_lib}
+      PATHS ${RSCL_SDK_LIBRARY_DIRS}
+      NO_DEFAULT_PATH
+    )
+    if(NOT "${RSCL_ONLINE_${rscl_lib_var}_LIBRARY}" STREQUAL "RSCL_ONLINE_${rscl_lib_var}_LIBRARY-NOTFOUND")
+      list(APPEND RSCL_ONLINE_SDK_LINK_LIBRARIES "${RSCL_ONLINE_${rscl_lib_var}_LIBRARY}")
+    else()
+      list(APPEND RSCL_ONLINE_SDK_LINK_LIBRARIES "${rscl_lib}")
     endif()
   endforeach()
 endif()
@@ -555,6 +582,9 @@ if(BUILD_RSCL_CPP)
   list(REMOVE_ITEM RSCL_ADAPTER_CPP_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_bag_runner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_bag_reader_stub.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_online_node.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_online_node_dlopen.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_online_node_stub.cpp
   )
 
   cuda_add_library(rscl_adapter_cpp STATIC
@@ -618,6 +648,79 @@ if(BUILD_RSCL_CPP)
         BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
         INSTALL_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
       )
+    endif()
+  endif()
+
+  if(BUILD_RSCL_ONLINE_NODE)
+    if(UNIX)
+      set(RSCL_ONLINE_NODE_BACKEND_LOADER deploy_rscl/cpp/src/rscl_online_node_dlopen.cpp)
+    else()
+      set(RSCL_ONLINE_NODE_BACKEND_LOADER deploy_rscl/cpp/src/rscl_online_node_stub.cpp)
+    endif()
+
+    add_executable(rscl_bevfusion_online_node
+      deploy_rscl/cpp/src/rscl_online_node.cpp
+      ${RSCL_ONLINE_NODE_BACKEND_LOADER}
+    )
+    add_dependencies(rscl_bevfusion_online_node custom_layernorm)
+
+    target_link_libraries(rscl_bevfusion_online_node
+      rscl_adapter_cpp
+      bevfusion_core
+      libcudart.so
+      libnvinfer.so
+      libspconv.so
+      ${Protobuf_LIBRARIES}
+      libnvinfer_plugin.so
+      ${RSCL_FFMPEG_LIBRARIES}
+      ${CMAKE_DL_LIBS}
+    )
+
+    set_target_properties(rscl_bevfusion_online_node PROPERTIES
+      BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
+      INSTALL_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    if("${RSCL_ONLINE_BACKEND_SOURCE}" STREQUAL "")
+      set(RSCL_HAVE_ONLINE_SDK_HINT OFF)
+      if(NOT "${RSCL_SDK_ROOT}" STREQUAL "")
+        set(RSCL_HAVE_ONLINE_SDK_HINT ON)
+      endif()
+      if(NOT "${RSCL_SDK_INCLUDE_DIRS}" STREQUAL "")
+        set(RSCL_HAVE_ONLINE_SDK_HINT ON)
+      endif()
+      if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/ad_rscl/runtime.h")
+        set(RSCL_HAVE_ONLINE_SDK_HINT ON)
+      endif()
+      if(RSCL_HAVE_ONLINE_SDK_HINT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/vehicle_rscl_online_node_ad.cpp")
+        set(RSCL_ONLINE_BACKEND_SOURCE deploy_rscl/cpp/vehicle_rscl_online_node_ad.cpp)
+      endif()
+    endif()
+
+    if(NOT "${RSCL_ONLINE_BACKEND_SOURCE}" STREQUAL "")
+      add_library(rscl_online_backend_ad SHARED
+        ${RSCL_ONLINE_BACKEND_SOURCE}
+      )
+
+      if(NOT "${RSCL_SDK_TARGET_INCLUDE_DIRS}" STREQUAL "")
+        target_include_directories(rscl_online_backend_ad PRIVATE
+          ${RSCL_SDK_TARGET_INCLUDE_DIRS}
+        )
+      endif()
+
+      target_link_libraries(rscl_online_backend_ad
+        ${RSCL_ONLINE_SDK_LINK_LIBRARIES}
+      )
+
+      if(NOT "${RSCL_SDK_LIBRARY_DIRS}" STREQUAL "")
+        set_target_properties(rscl_online_backend_ad PROPERTIES
+          BUILD_WITH_INSTALL_RPATH TRUE
+          BUILD_RPATH "${RSCL_SDK_LIBRARY_DIRS}"
+          INSTALL_RPATH "${RSCL_SDK_LIBRARY_DIRS}"
+        )
+      endif()
+    else()
+      message(WARNING "RSCL online backend source was not found. rscl_bevfusion_online_node will build, but runtime dlopen will fail until librscl_online_backend_ad.so is provided or RSCL_ONLINE_BACKEND_LIB is set.")
     endif()
   endif()
 endif()

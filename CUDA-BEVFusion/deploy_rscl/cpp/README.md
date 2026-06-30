@@ -13,6 +13,8 @@ The target is:
 ```text
 librscl_adapter_cpp.a
 rscl_bevfusion_bag_runner
+rscl_bevfusion_online_node
+librscl_online_backend_ad.so
 ```
 
 It reuses `bevfusion_core` directly and does not require `libpybev.so` or a
@@ -222,6 +224,101 @@ The three stages mean:
   can be decoded into adapter packets.
 - Full inference additionally requires CUDA/TensorRT engines, calibration, and
   a valid lidar/camera geometry configuration.
+
+## Online RSCL Node
+
+`rscl_bevfusion_online_node` subscribes to the camera and lidar topics in
+`deploy_rscl/configs/bevfusion_rscl.yaml`, runs the same C++ synchronization,
+decode, preprocessing and TensorRT pipeline as the offline runner, then
+publishes JSON detections to `output_topic`.
+
+The executable keeps the RSCL SDK boundary in a small shared backend:
+
+```text
+rscl_bevfusion_online_node      # BEVFusion pipeline and dlopen loader
+librscl_online_backend_ad.so    # RSCL Runtime/Node/Publisher/Subscriber glue
+```
+
+The split avoids linking the full BEVFusion binary directly against the RSCL
+SDK's dependency tree. At runtime the loader searches:
+
+```text
+$RSCL_ONLINE_BACKEND_LIB
+<rscl_bevfusion_online_node directory>/librscl_online_backend_ad.so
+./build/librscl_online_backend_ad.so
+./build_rscl/librscl_online_backend_ad.so
+./librscl_online_backend_ad.so
+librscl_online_backend_ad.so
+```
+
+Build on x86 or aarch64 with the installed `/opt` SDK:
+
+```bash
+cd /path/to/CUDA-BEVFusion
+source deploy_rscl/cpp/env_senseauto.sh /opt/senseauto_active
+
+rm -rf build_rscl
+mkdir -p build_rscl && cd build_rscl
+cmake .. \
+  -DBUILD_RSCL_CPP=ON \
+  -DBUILD_RSCL_BAG_RUNNER=ON \
+  -DBUILD_RSCL_ONLINE_NODE=ON \
+  -DSENSEAUTO_INSTALL_ROOT=/opt/senseauto_active \
+  -DRSCL_ENABLE_FFMPEG_DECODER=ON
+make -j
+```
+
+If CMake cannot auto-detect the installed SDK, pass the same explicit roots as
+the offline runner:
+
+```bash
+cmake .. \
+  -DBUILD_RSCL_CPP=ON \
+  -DBUILD_RSCL_ONLINE_NODE=ON \
+  -DRSCL_SDK_ROOT=/opt/senseauto_active/tmp/senseauto-rscl \
+  -DRSCL_MSGS_ROOT=/opt/senseauto_active/tmp/senseauto-msgs \
+  -DRSCL_THIRDPARTY_ROOT=/opt/senseauto_active/tmp/senseauto-3rdparty
+```
+
+Run online smoke tests before full inference:
+
+```bash
+cd /path/to/CUDA-BEVFusion
+source deploy_rscl/cpp/env_senseauto.sh /opt/senseauto_active
+
+./build_rscl/rscl_bevfusion_online_node \
+  --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml \
+  --decode-only \
+  --timestamp-source receive \
+  --sync-debug \
+  --message-debug
+
+./build_rscl/rscl_bevfusion_online_node \
+  --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml \
+  --decode-images-only \
+  --timestamp-source receive \
+  --sync-debug
+```
+
+After topic, timestamp and decode checks pass, run full online inference:
+
+```bash
+./build_rscl/rscl_bevfusion_online_node \
+  --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml \
+  --timestamp-source receive \
+  --output-file runs/online_outputs.jsonl
+```
+
+The online backend currently subscribes and publishes `RawMessage` topics. The
+incoming payload is converted to the same `BagMessage` shape used by the
+offline runner, including stripping the RSCL trailer header when present and
+using the header timestamp as a fallback for synchronization.
+
+When testing with `rsclbag play`, use `--timestamp-source receive` if the RSCL
+trailer header stamps differ across topics. This makes synchronization use the
+time each replayed message reaches the online node, while the default
+`--timestamp-source auto` still prefers payload timestamps and then RSCL header
+timestamps for normal online runs.
 
 If FFmpeg development packages are unavailable, set
 `-DRSCL_ENABLE_FFMPEG_DECODER=OFF` and feed decoded image messages only. Encoded
