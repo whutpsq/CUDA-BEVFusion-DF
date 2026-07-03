@@ -41,12 +41,87 @@ set(RSCL_SDK_INCLUDE_DIRS "" CACHE STRING "Optional RSCL SDK include directories
 set(RSCL_SDK_LIBRARY_DIRS "" CACHE STRING "Optional RSCL SDK library directories")
 set(RSCL_SDK_LIBRARIES "" CACHE STRING "Optional RSCL SDK libraries for rscl_bevfusion_bag_runner")
 set(RSCL_ONLINE_SDK_LIBRARIES "" CACHE STRING "Optional RSCL SDK libraries for librscl_online_backend_ad.so")
+set(RSCL_FFMPEG_ROOT "$ENV{RSCL_FFMPEG_ROOT}" CACHE PATH "Optional FFmpeg root for RSCL camera decoder")
+set(RSCL_FFMPEG_INCLUDE_DIR "" CACHE PATH "Optional FFmpeg include directory")
+set(RSCL_FFMPEG_LIBRARY_DIR "" CACHE PATH "Optional FFmpeg library directory")
+set(BEVFUSION_TARGET_ARCH "" CACHE STRING "Target runtime architecture. Defaults to CMAKE_SYSTEM_PROCESSOR, then CMAKE_HOST_SYSTEM_PROCESSOR")
+set(BEVFUSION_SPCONV_ROOT "../libraries/3DSparseConvolution/libspconv" CACHE PATH "Path to the libspconv root directory")
+set(BEVFUSION_SPCONV_ARCH "" CACHE STRING "Architecture directory prefix used under libspconv/lib, for example x86_64 or aarch64")
+set(BEVFUSION_CUDA_ARCHS "86" CACHE STRING "Semicolon-separated CUDA SM architectures, for example 86, 87, or 90")
+set(BEVFUSION_CUDA_INCLUDE_DIRS "" CACHE STRING "Optional additional CUDA include directories")
+set(BEVFUSION_CUDA_LIBRARY_DIRS "" CACHE STRING "Optional additional CUDA library directories")
+set(BEVFUSION_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH "Optional CUDA driver library or stub")
+set(BEVFUSION_ZLIB_LIBRARY "" CACHE FILEPATH "Optional zlib library used by protobuf")
+set(BEVFUSION_UUID_LIBRARY "" CACHE FILEPATH "Optional uuid library used by RSCL")
+set(BEVFUSION_EXTRA_LINK_FLAGS "" CACHE STRING "Optional extra linker flags for all BEVFusion targets")
+set(BEVFUSION_PROTOBUF_ROOT "$ENV{BEVFUSION_PROTOBUF_ROOT}" CACHE PATH "Optional protobuf root containing include and lib directories")
 set(CMAKE_BUILD_TYPE "Release")
 # set(CMAKE_BUILD_TYPE "Debug")
-set(arch ${CMAKE_HOST_SYSTEM_PROCESSOR})
+if("${BEVFUSION_TARGET_ARCH}" STREQUAL "")
+  if(CMAKE_CROSSCOMPILING AND NOT "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "")
+    set(BEVFUSION_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}" CACHE STRING "Target runtime architecture. Defaults to CMAKE_SYSTEM_PROCESSOR, then CMAKE_HOST_SYSTEM_PROCESSOR" FORCE)
+  else()
+    set(BEVFUSION_TARGET_ARCH "${CMAKE_HOST_SYSTEM_PROCESSOR}" CACHE STRING "Target runtime architecture. Defaults to CMAKE_SYSTEM_PROCESSOR, then CMAKE_HOST_SYSTEM_PROCESSOR" FORCE)
+  endif()
+endif()
+if("${BEVFUSION_SPCONV_ARCH}" STREQUAL "")
+  set(BEVFUSION_SPCONV_ARCH "${BEVFUSION_TARGET_ARCH}" CACHE STRING "Architecture directory prefix used under libspconv/lib, for example x86_64 or aarch64" FORCE)
+endif()
+set(arch ${BEVFUSION_SPCONV_ARCH})
 
+set(CUDA_USE_STATIC_CUDA_RUNTIME OFF CACHE BOOL "Use static CUDA runtime" FORCE)
 find_package(CUDA REQUIRED)
+if(NOT "${BEVFUSION_PROTOBUF_ROOT}" STREQUAL "")
+  if(EXISTS "${BEVFUSION_PROTOBUF_ROOT}/include/google/protobuf/message.h")
+    set(Protobuf_INCLUDE_DIR "${BEVFUSION_PROTOBUF_ROOT}/include" CACHE PATH "Protobuf include directory" FORCE)
+  else()
+    find_path(Protobuf_INCLUDE_DIR google/protobuf/message.h
+      HINTS
+        "${BEVFUSION_PROTOBUF_ROOT}/include"
+      NO_DEFAULT_PATH
+      NO_CMAKE_FIND_ROOT_PATH
+    )
+  endif()
+  set(PROTOBUF_INCLUDE_DIR "${Protobuf_INCLUDE_DIR}" CACHE PATH "Protobuf include directory" FORCE)
+  if(EXISTS "${BEVFUSION_PROTOBUF_ROOT}/lib/libprotobuf.so")
+    set(Protobuf_LIBRARY "${BEVFUSION_PROTOBUF_ROOT}/lib/libprotobuf.so" CACHE FILEPATH "Protobuf library" FORCE)
+  else()
+    file(GLOB BEVFUSION_PROTOBUF_LIBRARY_CANDIDATES
+      "${BEVFUSION_PROTOBUF_ROOT}/lib/libprotobuf.so.*"
+      "${BEVFUSION_PROTOBUF_ROOT}/lib64/libprotobuf.so.*"
+    )
+    list(SORT BEVFUSION_PROTOBUF_LIBRARY_CANDIDATES)
+    list(LENGTH BEVFUSION_PROTOBUF_LIBRARY_CANDIDATES BEVFUSION_PROTOBUF_LIBRARY_CANDIDATE_COUNT)
+    if(BEVFUSION_PROTOBUF_LIBRARY_CANDIDATE_COUNT GREATER 0)
+      list(GET BEVFUSION_PROTOBUF_LIBRARY_CANDIDATES 0 Protobuf_LIBRARY_CANDIDATE)
+      set(Protobuf_LIBRARY "${Protobuf_LIBRARY_CANDIDATE}" CACHE FILEPATH "Protobuf library" FORCE)
+    else()
+      find_library(Protobuf_LIBRARY protobuf
+        HINTS
+          "${BEVFUSION_PROTOBUF_ROOT}/lib"
+          "${BEVFUSION_PROTOBUF_ROOT}/lib64"
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH
+      )
+    endif()
+  endif()
+  set(PROTOBUF_LIBRARY "${Protobuf_LIBRARY}" CACHE FILEPATH "Protobuf library" FORCE)
+endif()
 find_package(Protobuf REQUIRED)
+if(NOT "${BEVFUSION_PROTOBUF_ROOT}" STREQUAL "" AND EXISTS "${BEVFUSION_PROTOBUF_ROOT}/include/google/protobuf/message.h")
+  set(Protobuf_INCLUDE_DIR "${BEVFUSION_PROTOBUF_ROOT}/include" CACHE PATH "Protobuf include directory" FORCE)
+  set(PROTOBUF_INCLUDE_DIR "${BEVFUSION_PROTOBUF_ROOT}/include" CACHE PATH "Protobuf include directory" FORCE)
+  set(Protobuf_INCLUDE_DIRS "${BEVFUSION_PROTOBUF_ROOT}/include")
+  set(PROTOBUF_INCLUDE_DIRS "${BEVFUSION_PROTOBUF_ROOT}/include")
+endif()
+if(NOT "${BEVFUSION_PROTOBUF_ROOT}" STREQUAL "" AND NOT "${Protobuf_LIBRARY}" MATCHES "NOTFOUND")
+  set(Protobuf_LIBRARIES "${Protobuf_LIBRARY}")
+  set(PROTOBUF_LIBRARIES "${Protobuf_LIBRARY}")
+elseif(("${Protobuf_LIBRARIES}" STREQUAL "" OR "${Protobuf_LIBRARIES}" MATCHES "NOTFOUND") AND NOT "${PROTOBUF_LIBRARIES}" MATCHES "NOTFOUND")
+  set(Protobuf_LIBRARIES "${PROTOBUF_LIBRARIES}")
+endif()
+message(STATUS "Protobuf_INCLUDE_DIRS = ${Protobuf_INCLUDE_DIRS}")
+message(STATUS "Protobuf_LIBRARIES = ${Protobuf_LIBRARIES}")
 
 find_path(TensorRT_INCLUDE_DIR NvInfer.h
   HINTS
@@ -92,9 +167,91 @@ get_filename_component(TensorRT_LIBRARY_DIR ${TensorRT_NVINFER_LIBRARY} PATH)
 message(STATUS "TensorRT_INCLUDE_DIR = ${TensorRT_INCLUDE_DIR}")
 message(STATUS "TensorRT_LIBRARY_DIR = ${TensorRT_LIBRARY_DIR}")
 
-set(spconv_include ../libraries/3DSparseConvolution/libspconv/include)
-set(spconv_lib ../libraries/3DSparseConvolution/libspconv/lib/${arch}_cuda$ENV{SPCONV_CUDA_VERSION})
+set(spconv_include ${BEVFUSION_SPCONV_ROOT}/include)
+set(spconv_lib ${BEVFUSION_SPCONV_ROOT}/lib/${arch}_cuda$ENV{SPCONV_CUDA_VERSION})
+find_library(BEVFUSION_SPCONV_LIBRARY spconv
+  HINTS
+    ${spconv_lib}
+  NO_DEFAULT_PATH
+  NO_CMAKE_FIND_ROOT_PATH
+)
+if("${BEVFUSION_SPCONV_LIBRARY}" MATCHES "NOTFOUND")
+  set(BEVFUSION_SPCONV_LIBRARY libspconv.so)
+endif()
+find_library(BEVFUSION_CUDART_LIBRARY cudart
+  HINTS
+    $ENV{CUDA_Lib}
+    ${BEVFUSION_CUDA_LIBRARY_DIRS}
+  NO_DEFAULT_PATH
+  NO_CMAKE_FIND_ROOT_PATH
+)
+if("${BEVFUSION_CUDART_LIBRARY}" MATCHES "NOTFOUND")
+  set(BEVFUSION_CUDART_LIBRARY libcudart.so)
+endif()
+find_library(BEVFUSION_CUBLASLT_LIBRARY cublasLt
+  HINTS
+    $ENV{CUDA_Lib}
+    ${BEVFUSION_CUDA_LIBRARY_DIRS}
+  NO_DEFAULT_PATH
+  NO_CMAKE_FIND_ROOT_PATH
+)
+if("${BEVFUSION_CUBLASLT_LIBRARY}" MATCHES "NOTFOUND")
+  set(BEVFUSION_CUBLASLT_LIBRARY libcublasLt.so)
+endif()
+if("${BEVFUSION_CUDA_DRIVER_LIBRARY}" STREQUAL "")
+  find_library(BEVFUSION_CUDA_DRIVER_LIBRARY cuda
+    HINTS
+      $ENV{CUDA_Lib}
+      ${BEVFUSION_CUDA_LIBRARY_DIRS}
+    NO_DEFAULT_PATH
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+endif()
+if("${BEVFUSION_CUDA_DRIVER_LIBRARY}" MATCHES "NOTFOUND")
+  set(BEVFUSION_CUDA_DRIVER_LIBRARY "")
+endif()
+if("${BEVFUSION_ZLIB_LIBRARY}" STREQUAL "")
+  find_library(BEVFUSION_ZLIB_LIBRARY z
+    HINTS
+      ${RSCL_SDK_LIBRARY_DIRS}
+    NO_DEFAULT_PATH
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+endif()
+if("${BEVFUSION_ZLIB_LIBRARY}" MATCHES "NOTFOUND")
+  set(BEVFUSION_ZLIB_LIBRARY "")
+endif()
+if("${BEVFUSION_UUID_LIBRARY}" STREQUAL "")
+  find_library(BEVFUSION_UUID_LIBRARY uuid
+    HINTS
+      ${RSCL_SDK_LIBRARY_DIRS}
+    NO_DEFAULT_PATH
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+endif()
+if("${BEVFUSION_UUID_LIBRARY}" MATCHES "NOTFOUND")
+  set(BEVFUSION_UUID_LIBRARY "")
+endif()
+message(STATUS "BEVFUSION_TARGET_ARCH = ${BEVFUSION_TARGET_ARCH}")
+message(STATUS "BEVFUSION_SPCONV_ARCH = ${BEVFUSION_SPCONV_ARCH}")
 message(STATUS "spconv_lib = ${spconv_lib}")
+message(STATUS "BEVFUSION_SPCONV_LIBRARY = ${BEVFUSION_SPCONV_LIBRARY}")
+message(STATUS "BEVFUSION_CUDART_LIBRARY = ${BEVFUSION_CUDART_LIBRARY}")
+message(STATUS "BEVFUSION_CUBLASLT_LIBRARY = ${BEVFUSION_CUBLASLT_LIBRARY}")
+message(STATUS "BEVFUSION_CUDA_DRIVER_LIBRARY = ${BEVFUSION_CUDA_DRIVER_LIBRARY}")
+message(STATUS "BEVFUSION_ZLIB_LIBRARY = ${BEVFUSION_ZLIB_LIBRARY}")
+message(STATUS "BEVFUSION_UUID_LIBRARY = ${BEVFUSION_UUID_LIBRARY}")
+
+set(BEVFUSION_EXTRA_LINK_LIBRARIES "")
+if(NOT "${BEVFUSION_CUDA_DRIVER_LIBRARY}" STREQUAL "")
+  list(APPEND BEVFUSION_EXTRA_LINK_LIBRARIES ${BEVFUSION_CUDA_DRIVER_LIBRARY})
+endif()
+if(NOT "${BEVFUSION_ZLIB_LIBRARY}" STREQUAL "")
+  list(APPEND BEVFUSION_EXTRA_LINK_LIBRARIES ${BEVFUSION_ZLIB_LIBRARY})
+endif()
+if(NOT "${BEVFUSION_UUID_LIBRARY}" STREQUAL "")
+  list(APPEND BEVFUSION_EXTRA_LINK_LIBRARIES ${BEVFUSION_UUID_LIBRARY})
+endif()
 
 #if("$ENV{SPCONV_CUDA_VERSION}" EQUAL "11.4")
 #  # For cuda 11.x
@@ -111,12 +268,21 @@ set(CMAKE_CXX_FLAGS_DEBUG   "-std=c++14 -O0 -g -DENABLE_TEXT_BACKEND_STB")
 
 set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
   -std=c++14
-  -gencode arch=compute_86,code=compute_86
+)
+foreach(cuda_arch ${BEVFUSION_CUDA_ARCHS})
+  if(NOT "${cuda_arch}" STREQUAL "")
+    list(APPEND CUDA_NVCC_FLAGS -gencode arch=compute_${cuda_arch},code=compute_${cuda_arch})
+  endif()
+endforeach()
+message(STATUS "BEVFUSION_CUDA_ARCHS = ${BEVFUSION_CUDA_ARCHS}")
+
+include_directories(BEFORE
+  ${Protobuf_INCLUDE_DIRS}
 )
 
 include_directories(
-  ${Protobuf_INCLUDE_DIRS}
   $ENV{CUDA_Inc}
+  ${BEVFUSION_CUDA_INCLUDE_DIRS}
   ${TensorRT_INCLUDE_DIR}
   $ENV{Python_Inc}
   ../dependencies/stb
@@ -187,6 +353,10 @@ if("${RSCL_SDK_ROOT}" STREQUAL "")
   file(GLOB RSCL_WORKSPACE_CANDIDATES
     "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/695_x86/senseauto-rscl*/opt/senseauto/tmp/senseauto-rscl"
     "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/695_x86/*/opt/senseauto/tmp/senseauto-rscl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/senseauto-rscl*/opt/senseauto/tmp/senseauto-rscl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/*/opt/senseauto/tmp/senseauto-rscl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/senseauto-rscl*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/*/senseauto-rscl*"
   )
   list(APPEND RSCL_SDK_CANDIDATES
     ${RSCL_WORKSPACE_CANDIDATES}
@@ -270,6 +440,10 @@ if("${RSCL_THIRDPARTY_ROOT}" STREQUAL "")
   file(GLOB RSCL_THIRDPARTY_WORKSPACE_CANDIDATES
     "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/695_x86/senseauto-3rdparty*/opt/senseauto/tmp/senseauto-3rdparty"
     "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/695_x86/*/opt/senseauto/tmp/senseauto-3rdparty"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/senseauto-3rdparty*/opt/senseauto/tmp/senseauto-3rdparty"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/*/opt/senseauto/tmp/senseauto-3rdparty"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/senseauto-3rdparty*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/*/senseauto-3rdparty*"
   )
   list(APPEND RSCL_THIRDPARTY_CANDIDATES ${RSCL_THIRDPARTY_WORKSPACE_CANDIDATES})
   foreach(candidate ${RSCL_THIRDPARTY_CANDIDATES})
@@ -337,6 +511,10 @@ if("${RSCL_MSGS_ROOT}" STREQUAL "")
   file(GLOB RSCL_MSGS_WORKSPACE_CANDIDATES
     "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/695_x86/senseauto-msgs*/opt/senseauto/tmp/senseauto-msgs"
     "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/695_x86/*/opt/senseauto/tmp/senseauto-msgs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/senseauto-msgs*/opt/senseauto/tmp/senseauto-msgs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/*/opt/senseauto/tmp/senseauto-msgs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/senseauto-msgs*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.sdk_cache/${BEVFUSION_TARGET_ARCH}/*/senseauto-msgs*"
   )
   list(APPEND RSCL_MSGS_CANDIDATES ${RSCL_MSGS_WORKSPACE_CANDIDATES})
   foreach(candidate ${RSCL_MSGS_CANDIDATES})
@@ -360,11 +538,24 @@ endif()
 
 link_directories(
   $ENV{CUDA_Lib}
+  ${BEVFUSION_CUDA_LIBRARY_DIRS}
   ${TensorRT_LIBRARY_DIR}
   ${spconv_lib}
   build
   $ENV{Python_Lib}
 )
+
+function(bevfusion_apply_extra_link_flags target_name)
+  if(NOT "${BEVFUSION_EXTRA_LINK_FLAGS}" STREQUAL "")
+    get_target_property(existing_link_flags ${target_name} LINK_FLAGS)
+    if("${existing_link_flags}" STREQUAL "existing_link_flags-NOTFOUND")
+      set(existing_link_flags "")
+    endif()
+    set_target_properties(${target_name} PROPERTIES
+      LINK_FLAGS "${existing_link_flags} ${BEVFUSION_EXTRA_LINK_FLAGS}"
+    )
+  endif()
+endfunction()
 
 set(RSCL_SDK_TARGET_INCLUDE_DIRS ${RSCL_SDK_INCLUDE_DIRS})
 if(NOT "${RSCL_THIRDPARTY_ROOT}" STREQUAL "")
@@ -379,12 +570,17 @@ if(NOT "${RSCL_SDK_LIBRARIES}" STREQUAL "")
   foreach(rscl_lib ${RSCL_SDK_LIBRARIES})
     string(REPLACE "-" "_" rscl_lib_var "${rscl_lib}")
     string(TOUPPER "${rscl_lib_var}" rscl_lib_var)
-    find_library(RSCL_${rscl_lib_var}_LIBRARY
-      NAMES ${rscl_lib}
-      PATHS ${RSCL_SDK_LIBRARY_DIRS}
-      NO_DEFAULT_PATH
-    )
-    if(NOT "${RSCL_${rscl_lib_var}_LIBRARY}" STREQUAL "RSCL_${rscl_lib_var}_LIBRARY-NOTFOUND")
+    if(NOT "${RSCL_SDK_ROOT}" STREQUAL "" AND EXISTS "${RSCL_SDK_ROOT}/lib/lib${rscl_lib}.so")
+      set(RSCL_${rscl_lib_var}_LIBRARY "${RSCL_SDK_ROOT}/lib/lib${rscl_lib}.so" CACHE FILEPATH "RSCL ${rscl_lib} library" FORCE)
+    else()
+      find_library(RSCL_${rscl_lib_var}_LIBRARY
+        NAMES ${rscl_lib}
+        PATHS ${RSCL_SDK_LIBRARY_DIRS}
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH
+      )
+    endif()
+    if(NOT "${RSCL_${rscl_lib_var}_LIBRARY}" MATCHES "NOTFOUND")
       list(APPEND RSCL_SDK_LINK_LIBRARIES "${RSCL_${rscl_lib_var}_LIBRARY}")
     else()
       list(APPEND RSCL_SDK_LINK_LIBRARIES "${rscl_lib}")
@@ -400,12 +596,17 @@ if(NOT "${RSCL_ONLINE_SDK_LIBRARIES}" STREQUAL "")
   foreach(rscl_lib ${RSCL_ONLINE_SDK_LIBRARIES})
     string(REPLACE "-" "_" rscl_lib_var "${rscl_lib}")
     string(TOUPPER "${rscl_lib_var}" rscl_lib_var)
-    find_library(RSCL_ONLINE_${rscl_lib_var}_LIBRARY
-      NAMES ${rscl_lib}
-      PATHS ${RSCL_SDK_LIBRARY_DIRS}
-      NO_DEFAULT_PATH
-    )
-    if(NOT "${RSCL_ONLINE_${rscl_lib_var}_LIBRARY}" STREQUAL "RSCL_ONLINE_${rscl_lib_var}_LIBRARY-NOTFOUND")
+    if(NOT "${RSCL_SDK_ROOT}" STREQUAL "" AND EXISTS "${RSCL_SDK_ROOT}/lib/lib${rscl_lib}.so")
+      set(RSCL_ONLINE_${rscl_lib_var}_LIBRARY "${RSCL_SDK_ROOT}/lib/lib${rscl_lib}.so" CACHE FILEPATH "RSCL online ${rscl_lib} library" FORCE)
+    else()
+      find_library(RSCL_ONLINE_${rscl_lib_var}_LIBRARY
+        NAMES ${rscl_lib}
+        PATHS ${RSCL_SDK_LIBRARY_DIRS}
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH
+      )
+    endif()
+    if(NOT "${RSCL_ONLINE_${rscl_lib_var}_LIBRARY}" MATCHES "NOTFOUND")
       list(APPEND RSCL_ONLINE_SDK_LINK_LIBRARIES "${RSCL_ONLINE_${rscl_lib_var}_LIBRARY}")
     else()
       list(APPEND RSCL_ONLINE_SDK_LINK_LIBRARIES "${rscl_lib}")
@@ -416,6 +617,25 @@ endif()
 set(RSCL_FFMPEG_INCLUDE_DIRS "")
 set(RSCL_FFMPEG_LIBRARIES "")
 if(RSCL_ENABLE_FFMPEG_DECODER)
+  set(RSCL_FFMPEG_HINT_INCLUDE_DIRS "")
+  set(RSCL_FFMPEG_HINT_LIBRARY_DIRS "")
+  if(NOT "${RSCL_FFMPEG_INCLUDE_DIR}" STREQUAL "")
+    list(APPEND RSCL_FFMPEG_HINT_INCLUDE_DIRS "${RSCL_FFMPEG_INCLUDE_DIR}")
+  endif()
+  if(NOT "${RSCL_FFMPEG_LIBRARY_DIR}" STREQUAL "")
+    list(APPEND RSCL_FFMPEG_HINT_LIBRARY_DIRS "${RSCL_FFMPEG_LIBRARY_DIR}")
+  endif()
+  if(NOT "${RSCL_FFMPEG_ROOT}" STREQUAL "")
+    list(APPEND RSCL_FFMPEG_HINT_INCLUDE_DIRS
+      "${RSCL_FFMPEG_ROOT}/include"
+      "${RSCL_FFMPEG_ROOT}/include/aarch64-linux-gnu"
+    )
+    list(APPEND RSCL_FFMPEG_HINT_LIBRARY_DIRS
+      "${RSCL_FFMPEG_ROOT}/lib"
+      "${RSCL_FFMPEG_ROOT}/lib64"
+      "${RSCL_FFMPEG_ROOT}/lib/aarch64-linux-gnu"
+    )
+  endif()
   find_package(PkgConfig QUIET)
   if(PKG_CONFIG_FOUND)
     pkg_check_modules(RSCL_LIBAVCODEC QUIET libavcodec)
@@ -440,39 +660,51 @@ if(RSCL_ENABLE_FFMPEG_DECODER)
   else()
     find_path(RSCL_FFMPEG_AVCODEC_INCLUDE_DIR libavcodec/avcodec.h
       HINTS
+        ${RSCL_FFMPEG_HINT_INCLUDE_DIRS}
         /usr/include
         /usr/include/x86_64-linux-gnu
         /usr/local/include
+      NO_CMAKE_FIND_ROOT_PATH
     )
     find_path(RSCL_FFMPEG_AVUTIL_INCLUDE_DIR libavutil/imgutils.h
       HINTS
+        ${RSCL_FFMPEG_HINT_INCLUDE_DIRS}
         /usr/include
         /usr/include/x86_64-linux-gnu
         /usr/local/include
+      NO_CMAKE_FIND_ROOT_PATH
     )
     find_path(RSCL_FFMPEG_SWSCALE_INCLUDE_DIR libswscale/swscale.h
       HINTS
+        ${RSCL_FFMPEG_HINT_INCLUDE_DIRS}
         /usr/include
         /usr/include/x86_64-linux-gnu
         /usr/local/include
+      NO_CMAKE_FIND_ROOT_PATH
     )
     find_library(RSCL_FFMPEG_AVCODEC_LIBRARY avcodec
       HINTS
+        ${RSCL_FFMPEG_HINT_LIBRARY_DIRS}
         /usr/lib
         /usr/lib/x86_64-linux-gnu
         /usr/local/lib
+      NO_CMAKE_FIND_ROOT_PATH
     )
     find_library(RSCL_FFMPEG_AVUTIL_LIBRARY avutil
       HINTS
+        ${RSCL_FFMPEG_HINT_LIBRARY_DIRS}
         /usr/lib
         /usr/lib/x86_64-linux-gnu
         /usr/local/lib
+      NO_CMAKE_FIND_ROOT_PATH
     )
     find_library(RSCL_FFMPEG_SWSCALE_LIBRARY swscale
       HINTS
+        ${RSCL_FFMPEG_HINT_LIBRARY_DIRS}
         /usr/lib
         /usr/lib/x86_64-linux-gnu
         /usr/local/lib
+      NO_CMAKE_FIND_ROOT_PATH
     )
 
     if(RSCL_FFMPEG_AVCODEC_INCLUDE_DIR AND RSCL_FFMPEG_AVUTIL_INCLUDE_DIR AND RSCL_FFMPEG_SWSCALE_INCLUDE_DIR AND
@@ -502,9 +734,12 @@ endif()
 file(GLOB_RECURSE CORE_FILES 
   src/bevfusion/*.cu 
   src/bevfusion/*.cpp
-  src/onnx/*.cpp
   src/common/tensor.cu
   src/common/tensorrt.cpp
+)
+list(APPEND CORE_FILES
+  src/onnx/onnx-ml.pb.cpp
+  src/onnx/onnx-operators-ml.pb.cpp
 )
 
 file(GLOB_RECURSE VISUALIZE_FILES 
@@ -517,14 +752,19 @@ file(GLOB_RECURSE VISUALIZE_FILES
 cuda_add_library(bevfusion_core SHARED 
   ${CORE_FILES}
 )
+bevfusion_apply_extra_link_flags(bevfusion_core)
+if(NOT "${Protobuf_INCLUDE_DIRS}" STREQUAL "")
+  target_include_directories(bevfusion_core BEFORE PRIVATE ${Protobuf_INCLUDE_DIRS})
+endif()
 
 target_link_libraries(bevfusion_core
-  libcudart.so
-  libcublasLt.so
-  libnvinfer.so
-  libspconv.so
+  ${BEVFUSION_CUDART_LIBRARY}
+  ${BEVFUSION_CUBLASLT_LIBRARY}
+  ${TensorRT_NVINFER_LIBRARY}
+  ${BEVFUSION_SPCONV_LIBRARY}
   ${Protobuf_LIBRARIES}
-  libnvinfer_plugin.so
+  ${TensorRT_NVINFER_PLUGIN_LIBRARY}
+  ${BEVFUSION_EXTRA_LINK_LIBRARIES}
 )
 #######################################################################
 
@@ -534,13 +774,15 @@ cuda_add_executable(bevfusion
   src/main.cpp
   ${VISUALIZE_FILES}
 )
+bevfusion_apply_extra_link_flags(bevfusion)
 
 target_link_libraries(bevfusion
   bevfusion_core
-  libnvinfer.so
-  libspconv.so
+  ${TensorRT_NVINFER_LIBRARY}
+  ${BEVFUSION_SPCONV_LIBRARY}
   ${Protobuf_LIBRARIES}
-  libnvinfer_plugin.so
+  ${TensorRT_NVINFER_PLUGIN_LIBRARY}
+  ${BEVFUSION_EXTRA_LINK_LIBRARIES}
 )
 #######################################################################
 
@@ -549,10 +791,12 @@ target_link_libraries(bevfusion
 cuda_add_library(custom_layernorm SHARED
   src/plugins/custom_layernorm.cu
 )
+bevfusion_apply_extra_link_flags(custom_layernorm)
 
 target_link_libraries(custom_layernorm
-  libnvinfer.so
-  libnvinfer_plugin.so
+  ${TensorRT_NVINFER_LIBRARY}
+  ${TensorRT_NVINFER_PLUGIN_LIBRARY}
+  ${BEVFUSION_EXTRA_LINK_LIBRARIES}
 )
 #######################################################################
 
@@ -562,12 +806,14 @@ if("${CMAKE_BUILD_PYTHON}" STREQUAL "ON")
   cuda_add_library(pybev SHARED
     src/python.cpp
   )
+  bevfusion_apply_extra_link_flags(pybev)
   target_link_libraries(pybev
     bevfusion_core
-    libnvinfer.so
-    libspconv.so
+    ${TensorRT_NVINFER_LIBRARY}
+    ${BEVFUSION_SPCONV_LIBRARY}
     ${Protobuf_LIBRARIES}
-    libnvinfer_plugin.so
+    ${TensorRT_NVINFER_PLUGIN_LIBRARY}
+    ${BEVFUSION_EXTRA_LINK_LIBRARIES}
     $ENV{Python_Soname}
   )
 endif()
@@ -593,12 +839,13 @@ if(BUILD_RSCL_CPP)
 
   target_link_libraries(rscl_adapter_cpp
     bevfusion_core
-    libcudart.so
-    libnvinfer.so
-    libspconv.so
+    ${BEVFUSION_CUDART_LIBRARY}
+    ${TensorRT_NVINFER_LIBRARY}
+    ${BEVFUSION_SPCONV_LIBRARY}
     ${Protobuf_LIBRARIES}
-    libnvinfer_plugin.so
+    ${TensorRT_NVINFER_PLUGIN_LIBRARY}
     ${RSCL_FFMPEG_LIBRARIES}
+    ${BEVFUSION_EXTRA_LINK_LIBRARIES}
     ${CMAKE_DL_LIBS}
   )
 
@@ -617,6 +864,7 @@ if(BUILD_RSCL_CPP)
       deploy_rscl/cpp/src/rscl_bag_runner.cpp
       ${RSCL_BAG_BACKEND_SOURCE}
     )
+    bevfusion_apply_extra_link_flags(rscl_bevfusion_bag_runner)
     add_dependencies(rscl_bevfusion_bag_runner custom_layernorm)
 
     if(NOT "${RSCL_SDK_TARGET_INCLUDE_DIRS}" STREQUAL "")
@@ -628,13 +876,14 @@ if(BUILD_RSCL_CPP)
     target_link_libraries(rscl_bevfusion_bag_runner
       rscl_adapter_cpp
       bevfusion_core
-      libcudart.so
-      libnvinfer.so
-      libspconv.so
+      ${BEVFUSION_CUDART_LIBRARY}
+      ${TensorRT_NVINFER_LIBRARY}
+      ${BEVFUSION_SPCONV_LIBRARY}
       ${Protobuf_LIBRARIES}
-      libnvinfer_plugin.so
+      ${TensorRT_NVINFER_PLUGIN_LIBRARY}
       ${RSCL_FFMPEG_LIBRARIES}
       ${RSCL_SDK_LINK_LIBRARIES}
+      ${BEVFUSION_EXTRA_LINK_LIBRARIES}
       ${CMAKE_DL_LIBS}
     )
     if(NOT "${RSCL_SDK_LIBRARY_DIRS}" STREQUAL "")
@@ -662,17 +911,19 @@ if(BUILD_RSCL_CPP)
       deploy_rscl/cpp/src/rscl_online_node.cpp
       ${RSCL_ONLINE_NODE_BACKEND_LOADER}
     )
+    bevfusion_apply_extra_link_flags(rscl_bevfusion_online_node)
     add_dependencies(rscl_bevfusion_online_node custom_layernorm)
 
     target_link_libraries(rscl_bevfusion_online_node
       rscl_adapter_cpp
       bevfusion_core
-      libcudart.so
-      libnvinfer.so
-      libspconv.so
+      ${BEVFUSION_CUDART_LIBRARY}
+      ${TensorRT_NVINFER_LIBRARY}
+      ${BEVFUSION_SPCONV_LIBRARY}
       ${Protobuf_LIBRARIES}
-      libnvinfer_plugin.so
+      ${TensorRT_NVINFER_PLUGIN_LIBRARY}
       ${RSCL_FFMPEG_LIBRARIES}
+      ${BEVFUSION_EXTRA_LINK_LIBRARIES}
       ${CMAKE_DL_LIBS}
     )
 
@@ -701,6 +952,7 @@ if(BUILD_RSCL_CPP)
       add_library(rscl_online_backend_ad SHARED
         ${RSCL_ONLINE_BACKEND_SOURCE}
       )
+      bevfusion_apply_extra_link_flags(rscl_online_backend_ad)
 
       if(NOT "${RSCL_SDK_TARGET_INCLUDE_DIRS}" STREQUAL "")
         target_include_directories(rscl_online_backend_ad PRIVATE
@@ -710,6 +962,7 @@ if(BUILD_RSCL_CPP)
 
       target_link_libraries(rscl_online_backend_ad
         ${RSCL_ONLINE_SDK_LINK_LIBRARIES}
+        ${BEVFUSION_EXTRA_LINK_LIBRARIES}
       )
 
       if(NOT "${RSCL_SDK_LIBRARY_DIRS}" STREQUAL "")

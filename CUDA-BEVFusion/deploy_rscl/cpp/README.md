@@ -268,6 +268,83 @@ cmake .. \
 make -j
 ```
 
+### Cross Compile For Thor AArch64
+
+For the Thor cross-build environment with SenseAuto installed under
+`/opt/senseauto`, use the helper script:
+
+```bash
+cd /path/to/CUDA-BEVFusion
+bash deploy_rscl/cpp/build_aarch64_thor.sh
+```
+
+The script keeps the x86 build flow unchanged and configures a separate
+`build_aarch64_thor` directory. By default it uses:
+
+```text
+CUDA_HOME=/usr/local/thor/cuda-12.8
+TENSORRT_ROOT=/usr/local/thor/aarch64-linux-gnu
+THOR_TOOLCHAIN_ROOT=/usr/local/thor/aarch64--glibc--bleeding-edge-2024.02-1
+SENSEAUTO_INSTALL_ROOT=/opt/senseauto
+BEVFUSION_SPCONV_ROOT=<repo-parent>/libraries/3DSparseConvolution/libspconv
+BEVFUSION_PROTOBUF_ROOT=<senseauto-3rdparty>/3rdparty/protobuf
+```
+
+It prefers the SenseAuto Thor toolchain file when present:
+
+```text
+/opt/senseauto/senseauto-buildtools/*/v0.0.1/toolchains/thor/linux-aarch64-gcc-thor.cmake
+```
+
+and falls back to the repository toolchain file:
+
+```text
+cmake/toolchains/aarch64-thor.cmake
+```
+
+Override any path with environment variables:
+
+```bash
+BUILD_DIR=/tmp/bevfusion_aarch64 \
+CUDA_HOME=/usr/local/thor/cuda-12.8 \
+TENSORRT_ROOT=/usr/local/thor/aarch64-linux-gnu \
+SENSEAUTO_INSTALL_ROOT=/opt/senseauto \
+BEVFUSION_SPCONV_ROOT=/data1/psq/libraries/3DSparseConvolution/libspconv \
+bash deploy_rscl/cpp/build_aarch64_thor.sh
+```
+
+The script links against the SenseAuto aarch64 protobuf package by passing
+`BEVFUSION_PROTOBUF_ROOT` to CMake. It does not require executing the target
+`protoc`; the ONNX protobuf sources in `src/onnx` are already generated.
+
+The default CUDA architecture for this helper is `90`. If your Thor CUDA stack
+requires a different PTX target, override it:
+
+```bash
+BEVFUSION_CUDA_ARCHS=90 bash deploy_rscl/cpp/build_aarch64_thor.sh
+```
+
+For an online-only first build, reduce external dependencies:
+
+```bash
+BUILD_RSCL_BAG_RUNNER=OFF \
+RSCL_ENABLE_FFMPEG_DECODER=OFF \
+bash deploy_rscl/cpp/build_aarch64_thor.sh
+```
+
+Before building, check that the aarch64 spconv library is a real ELF shared
+library, not a Git LFS pointer:
+
+```bash
+file /data1/psq/libraries/3DSparseConvolution/libspconv/lib/aarch64_cuda12.8/libspconv.so
+```
+
+Expected output contains:
+
+```text
+ELF 64-bit LSB shared object, ARM aarch64
+```
+
 If CMake cannot auto-detect the installed SDK, pass the same explicit roots as
 the offline runner:
 
