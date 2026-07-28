@@ -123,21 +123,21 @@ void FrameSynchronizer::debug_status(const char* reason, int64_t lidar_timestamp
                                      const std::vector<int64_t>& signed_diffs_us) {
   if (!debug_ || debug_count_ >= debug_limit_) return;
   ++debug_count_;
-  std::cerr << "sync_debug reason=" << reason << " lidar_us=" << lidar_timestamp_us
+  std::cout << "sync_debug reason=" << reason << " lidar_us=" << lidar_timestamp_us
             << " tolerance_ms=" << static_cast<double>(tolerance_us_) / 1000.0
             << " lidar_offset_ms=" << static_cast<double>(lidar_time_offset_us_) / 1000.0
             << " lidar_queue=" << lidar_queue_.size();
   for (size_t i = 0; i < camera_queues_.size(); ++i) {
-    std::cerr << " cam[" << i << "]=" << camera_topics_[i] << " q=" << camera_queues_[i].size()
+    std::cout << " cam[" << i << "]=" << camera_topics_[i] << " q=" << camera_queues_[i].size()
               << " offset_ms=" << static_cast<double>(camera_time_offsets_us_[i]) / 1000.0;
     if (i < best_diffs_us.size()) {
-      std::cerr << " nearest_diff_ms=" << static_cast<double>(best_diffs_us[i]) / 1000.0;
-      std::cerr << " signed_diff_ms=" << static_cast<double>(signed_diffs_us[i]) / 1000.0;
-      std::cerr << " suggested_offset_ms="
+      std::cout << " nearest_diff_ms=" << static_cast<double>(best_diffs_us[i]) / 1000.0;
+      std::cout << " signed_diff_ms=" << static_cast<double>(signed_diffs_us[i]) / 1000.0;
+      std::cout << " suggested_offset_ms="
                 << static_cast<double>(camera_time_offsets_us_[i] - signed_diffs_us[i]) / 1000.0;
     }
   }
-  std::cerr << std::endl;
+  std::cout << std::endl;
 }
 
 }  // namespace rscl_adapter

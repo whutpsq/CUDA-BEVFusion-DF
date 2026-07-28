@@ -10,10 +10,11 @@ tensorrt_root="${TENSORRT_ROOT:-/usr/local/thor/aarch64-linux-gnu}"
 toolchain_root="${THOR_TOOLCHAIN_ROOT:-/usr/local/thor/aarch64--glibc--bleeding-edge-2024.02-1}"
 spconv_root="${BEVFUSION_SPCONV_ROOT:-$(cd "$repo_root/.." && pwd)/libraries/3DSparseConvolution/libspconv}"
 senseauto_root="${SENSEAUTO_INSTALL_ROOT:-/opt/senseauto}"
-cuda_archs="${BEVFUSION_CUDA_ARCHS:-90}"
+cuda_archs="${BEVFUSION_CUDA_ARCHS:-101}"
 build_bag_runner="${BUILD_RSCL_BAG_RUNNER:-ON}"
 build_online_node="${BUILD_RSCL_ONLINE_NODE:-ON}"
 enable_ffmpeg="${RSCL_ENABLE_FFMPEG_DECODER:-OFF}"
+enable_opencv_undistort="${RSCL_ENABLE_OPENCV_UNDISTORT:-ON}"
 
 first_dir() {
   local pattern="$1"
@@ -216,9 +217,34 @@ if [[ "$enable_ffmpeg" == "ON" ]]; then
   fi
 fi
 
+opencv_root="${RSCL_OPENCV_ROOT:-$thirdparty_root/3rdparty/opencv4}"
+opencv_include_dir="${RSCL_OPENCV_INCLUDE_DIR:-$opencv_root/include/opencv4}"
+opencv_library_dir="${RSCL_OPENCV_LIBRARY_DIR:-$opencv_root/lib}"
+opencv_core="${RSCL_OPENCV_CORE_LIBRARY:-}"
+opencv_imgproc="${RSCL_OPENCV_IMGPROC_LIBRARY:-}"
+opencv_calib3d="${RSCL_OPENCV_CALIB3D_LIBRARY:-}"
+if [[ "$enable_opencv_undistort" == "ON" ]]; then
+  [[ -z "$opencv_core" ]] && opencv_core="$(first_file "$opencv_library_dir/libopencv_core.so")"
+  [[ -z "$opencv_imgproc" ]] && opencv_imgproc="$(first_file "$opencv_library_dir/libopencv_imgproc.so")"
+  [[ -z "$opencv_calib3d" ]] && opencv_calib3d="$(first_file "$opencv_library_dir/libopencv_calib3d.so")"
+  if [[ ! -f "$opencv_include_dir/opencv2/calib3d.hpp" || -z "$opencv_core" ||
+        -z "$opencv_imgproc" || -z "$opencv_calib3d" ]]; then
+    echo "Cannot find complete aarch64 OpenCV headers/libraries for camera undistortion." >&2
+    echo "  opencv_include_dir=$opencv_include_dir" >&2
+    echo "  opencv_core=${opencv_core:-<missing>}" >&2
+    echo "  opencv_imgproc=${opencv_imgproc:-<missing>}" >&2
+    echo "  opencv_calib3d=${opencv_calib3d:-<missing>}" >&2
+    echo "Set RSCL_OPENCV_ROOT to the target OpenCV 4.x root." >&2
+    exit 1
+  fi
+fi
+
 link_dirs=("$cuda_runtime_lib" "$cuda_stub_lib" "$cuda_target_stub_lib" "$cuda_thor_stub_lib" "$(dirname "$zlib_library")" "$(dirname "$uuid_library")" "$(dirname "$cuda_driver_library")")
 if [[ "$enable_ffmpeg" == "ON" ]]; then
   link_dirs+=("$ffmpeg_library_dir")
+fi
+if [[ "$enable_opencv_undistort" == "ON" ]]; then
+  link_dirs+=("$opencv_library_dir")
 fi
 thor_link_flags=""
 for link_dir in "${link_dirs[@]}"; do
@@ -256,6 +282,13 @@ if [[ "$enable_ffmpeg" == "ON" ]]; then
   echo "RSCL_FFMPEG_AVCODEC_LIBRARY=$ffmpeg_avcodec"
   echo "RSCL_FFMPEG_AVUTIL_LIBRARY=$ffmpeg_avutil"
   echo "RSCL_FFMPEG_SWSCALE_LIBRARY=$ffmpeg_swscale"
+fi
+if [[ "$enable_opencv_undistort" == "ON" ]]; then
+  echo "RSCL_OPENCV_INCLUDE_DIR=$opencv_include_dir"
+  echo "RSCL_OPENCV_LIBRARY_DIR=$opencv_library_dir"
+  echo "RSCL_OPENCV_CORE_LIBRARY=$opencv_core"
+  echo "RSCL_OPENCV_IMGPROC_LIBRARY=$opencv_imgproc"
+  echo "RSCL_OPENCV_CALIB3D_LIBRARY=$opencv_calib3d"
 fi
 echo "THOR_LINK_FLAGS=$thor_link_flags"
 echo "spconv_root=$spconv_root"
@@ -297,6 +330,7 @@ cmake_args=(
   "-DBUILD_RSCL_BAG_RUNNER=$build_bag_runner"
   "-DBUILD_RSCL_ONLINE_NODE=$build_online_node"
   "-DRSCL_ENABLE_FFMPEG_DECODER=$enable_ffmpeg"
+  "-DRSCL_ENABLE_OPENCV_UNDISTORT=$enable_opencv_undistort"
 )
 if [[ "$enable_ffmpeg" == "ON" ]]; then
   cmake_args+=(
@@ -309,6 +343,16 @@ if [[ "$enable_ffmpeg" == "ON" ]]; then
     "-DRSCL_FFMPEG_AVCODEC_LIBRARY=$ffmpeg_avcodec"
     "-DRSCL_FFMPEG_AVUTIL_LIBRARY=$ffmpeg_avutil"
     "-DRSCL_FFMPEG_SWSCALE_LIBRARY=$ffmpeg_swscale"
+  )
+fi
+if [[ "$enable_opencv_undistort" == "ON" ]]; then
+  cmake_args+=(
+    "-DRSCL_OPENCV_ROOT=$opencv_root"
+    "-DRSCL_OPENCV_INCLUDE_DIR=$opencv_include_dir"
+    "-DRSCL_OPENCV_LIBRARY_DIR=$opencv_library_dir"
+    "-DRSCL_OPENCV_CORE_LIBRARY=$opencv_core"
+    "-DRSCL_OPENCV_IMGPROC_LIBRARY=$opencv_imgproc"
+    "-DRSCL_OPENCV_CALIB3D_LIBRARY=$opencv_calib3d"
   )
 fi
 if [[ -n "$msgs_root" ]]; then

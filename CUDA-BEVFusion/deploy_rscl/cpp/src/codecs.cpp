@@ -549,18 +549,19 @@ struct StatefulCameraDecoder::Impl {
     int ret = avcodec_send_packet(codec_, packet_);
     if (ret < 0) {
       if (ret == AVERROR_INVALIDDATA) {
-        throw VideoFrameNotReady("FFmpeg rejected packet while waiting for a decodable keyframe or codec config");
+        throw VideoFrameNotReady("FFmpeg " + codec_name
+                                 + " rejected packet while waiting for a decodable keyframe or codec config");
       }
       throw std::runtime_error("FFmpeg send_packet failed");
     }
 
     ret = avcodec_receive_frame(codec_, frame_);
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-      throw VideoFrameNotReady("Video decoder has not produced a frame yet");
+      throw VideoFrameNotReady("FFmpeg " + codec_name + " decoder has not produced a frame yet");
     }
     if (ret < 0) {
       if (ret == AVERROR_INVALIDDATA) {
-        throw VideoFrameNotReady("FFmpeg has not produced a valid frame yet");
+        throw VideoFrameNotReady("FFmpeg " + codec_name + " decoder has not produced a valid frame yet");
       }
       throw std::runtime_error("FFmpeg receive_frame failed");
     }

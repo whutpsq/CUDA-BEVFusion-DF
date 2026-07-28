@@ -4,6 +4,7 @@
 #include <string>
 #include <assert.h>
 #include <cuda_fp16.h>
+#include <cuda_runtime.h>
 
 using namespace nvinfer1;
 
@@ -138,6 +139,10 @@ public:
         dim3 block(32, 8);
         dim3 grid(1, (N + block.y - 1) / block.y);
 
+        // Clear any stale CUDA error before launching this plugin kernel so
+        // the status checked below belongs to this launch.
+        (void)cudaGetLastError();
+
         if(inputDesc[0].type == DataType::kHALF){
             layernorm_kernel<half><<<grid, block, 0, stream>>>((half*)x, (half*)weight, (half*)bias, (half*)y, N, C, this->epsilon);
         }else if(inputDesc[0].type == DataType::kFLOAT){
@@ -147,9 +152,14 @@ public:
             return 1;
         }
 
-        auto code = cudaPeekAtLastError();
+        auto code = cudaGetLastError();
         if(code != cudaSuccess){
-            printf("Failed to run kernel(layernorm_kernel) with dtype %d\n", (int)inputDesc[0].type);
+            printf(
+                "Failed to run kernel(layernorm_kernel), dtype=%d, CUDA error=%d (%s): %s\n",
+                (int)inputDesc[0].type,
+                (int)code,
+                cudaGetErrorName(code),
+                cudaGetErrorString(code));
             return 1;
         }
         return 0;

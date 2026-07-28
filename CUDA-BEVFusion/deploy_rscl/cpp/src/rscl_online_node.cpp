@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -198,7 +199,7 @@ static int64_t select_message_timestamp_us(const rscl_adapter::BagMessage& msg, 
   }
   if (source == TimestampSource::kHeader) return msg.timestamp_us;
   const int64_t payload_timestamp_us = try_decode_payload_timestamp_us(msg);
-  if (source == TimestampSource::kPayload) return payload_timestamp_us;
+  if (source == TimestampSource::kPayload) return payload_timestamp_us > 0 ? payload_timestamp_us : msg.timestamp_us;
   if (payload_timestamp_us > 0) return payload_timestamp_us;
   return msg.timestamp_us;
 }
@@ -219,6 +220,28 @@ static rscl_adapter::CameraPacket decode_camera_message(rscl_adapter::StatefulCa
 }
 
 static rscl_adapter::LidarPacket decode_lidar_message(const rscl_adapter::BagMessage& msg, int point_dim) {
+  // The typed online backend supplies the point bytes directly together with
+  // their layout. Bypass the generic JSON parser when that contract is present.
+  if (msg.point_step > 0 && msg.point_width > 0 && !msg.payload.empty()) {
+    const size_t expected_size = static_cast<size_t>(msg.point_step) * static_cast<size_t>(msg.point_width);
+    if (msg.payload.size() >= expected_size) {
+      static std::atomic<bool> logged_fastpath_begin(false);
+      if (!logged_fastpath_begin.exchange(true)) {
+        std::cout << "lidar_stage=binary_fastpath_begin bytes=" << msg.payload.size()
+                  << " point_step=" << msg.point_step << " width=" << msg.point_width << std::endl;
+      }
+      rscl_adapter::LidarPacket packet =
+          rscl_adapter::decode_lidar_packet(msg.topic, msg.timestamp_us, msg.payload.data(), msg.payload.size(),
+                                            point_dim, msg.point_step, msg.point_width);
+      static std::atomic<bool> logged_fastpath_done(false);
+      if (!logged_fastpath_done.exchange(true)) {
+        std::cout << "lidar_stage=binary_fastpath_done points=" << packet.points.size()
+                  << " point_dim=" << packet.point_dim << std::endl;
+      }
+      return packet;
+    }
+  }
+
   try {
     return rscl_adapter::decode_lidar_raw_message(msg.topic, msg.payload.data(), msg.payload.size(), point_dim);
   } catch (const std::exception&) {
@@ -241,6 +264,7 @@ class OnlineRunner {
         print_interval_s_(args.print_rate > 0.0f ? 1.0 / args.print_rate : 0.0) {
     for (size_t i = 0; i < cfg_.camera_topics.size(); ++i) {
       camera_decoders_[cfg_.camera_topics[i]].reset(new rscl_adapter::StatefulCameraDecoder());
+      camera_decoder_mutexes_[cfg_.camera_topics[i]].reset(new std::mutex());
     }
     if (!cfg_.output_file.empty()) {
       output_file_.open(cfg_.output_file.c_str(), std::ios::out | std::ios::trunc);
@@ -251,69 +275,136 @@ class OnlineRunner {
   void set_publisher(std::unique_ptr<rscl_adapter::OnlinePublisher> publisher) { publisher_ = std::move(publisher); }
 
   void on_message(const rscl_adapter::BagMessage& msg) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    static std::atomic<bool> logged_first_on_message(false);
+    const bool log_first_entry = !logged_first_on_message.exchange(true);
+    if (log_first_entry) {
+      std::cerr << "callback_stage=on_message_enter received_topic=[" << msg.topic << "]"
+                << " received_len=" << msg.topic.size()
+                << " configured_lidar_topic=[" << cfg_.lidar_topic << "]"
+                << " configured_len=" << cfg_.lidar_topic.size()
+                << " lidar_match=" << (msg.topic == cfg_.lidar_topic ? "true" : "false") << std::endl;
+    }
     try {
       print_message_debug(msg);
+      if (log_first_entry) std::cerr << "callback_stage=message_debug_done" << std::endl;
+
       std::string output_json;
       bool synced = false;
       int64_t selected_timestamp_us = 0;
+      bool is_camera = false;
+      bool is_lidar = false;
+      rscl_adapter::CameraPacket camera;
+      rscl_adapter::LidarPacket lidar;
+
       if (contains_topic(cfg_.camera_topics, msg.topic)) {
-        rscl_adapter::CameraPacket camera;
+        is_camera = true;
         if (decode_only_) {
           camera.topic = msg.topic;
           camera.timestamp_us = select_message_timestamp_us(msg, timestamp_source_);
         } else {
-          camera = decode_camera_message(camera_decoders_[msg.topic].get(), msg);
+          std::map<std::string, std::unique_ptr<rscl_adapter::StatefulCameraDecoder> >::iterator decoder_it =
+              camera_decoders_.find(msg.topic);
+          std::map<std::string, std::unique_ptr<std::mutex> >::iterator decoder_mutex_it =
+              camera_decoder_mutexes_.find(msg.topic);
+          if (decoder_it == camera_decoders_.end() || decoder_mutex_it == camera_decoder_mutexes_.end()) {
+            throw std::runtime_error("camera decoder is not initialized for topic: " + msg.topic);
+          }
+          std::lock_guard<std::mutex> decoder_lock(*decoder_mutex_it->second);
+          camera = decode_camera_message(decoder_it->second.get(), msg);
           if (timestamp_source_ == TimestampSource::kReceive) {
             camera.timestamp_us = select_message_timestamp_us(msg, timestamp_source_);
           }
         }
         selected_timestamp_us = camera.timestamp_us;
-        synced = pipeline_.add_camera(camera, &output_json);
       } else if (msg.topic == cfg_.lidar_topic) {
-        rscl_adapter::LidarPacket lidar;
+        is_lidar = true;
         if (decode_only_) {
           lidar.topic = msg.topic;
           lidar.timestamp_us = select_message_timestamp_us(msg, timestamp_source_);
           lidar.point_dim = cfg_.point_dim;
         } else {
+          // Dynamic reflection expands one LiDAR message into a large JSON
+          // document. Serializing the single LiDAR stream prevents concurrent
+          // JSON parses from exhausting memory while cameras remain parallel.
+          static std::atomic<bool> logged_waiting_lidar_decoder_lock(false);
+          if (!logged_waiting_lidar_decoder_lock.exchange(true)) {
+            std::cout << "lidar_stage=waiting_decoder_lock" << std::endl;
+          }
+          std::lock_guard<std::mutex> lidar_decoder_lock(lidar_decoder_mutex_);
+          static std::atomic<bool> logged_acquired_lidar_decoder_lock(false);
+          if (!logged_acquired_lidar_decoder_lock.exchange(true)) {
+            std::cout << "lidar_stage=acquired_decoder_lock" << std::endl;
+          }
           lidar = decode_lidar_message(msg, cfg_.point_dim);
           if (timestamp_source_ == TimestampSource::kReceive) {
             lidar.timestamp_us = select_message_timestamp_us(msg, timestamp_source_);
           }
         }
         selected_timestamp_us = lidar.timestamp_us;
-        synced = pipeline_.add_lidar(lidar, &output_json);
+      } else {
+        return;
       }
 
-      if (!synced) return;
-      ++synced_frames_;
-      if (dry_run_) {
-        print_status(selected_timestamp_us, -1);
-      } else if (!output_json.empty() || cfg_.publish_empty_frame) {
-        if (publisher_) publisher_->publish(output_json);
-        if (output_file_) {
-          output_file_ << output_json << "\n";
-          output_file_.flush();
+      // Keep expensive per-camera FFmpeg decoding outside this lock. Only the
+      // synchronizer, inference pipeline, publisher, and output file are
+      // serialized here.
+      if (is_lidar) {
+        static std::atomic<bool> logged_waiting_pipeline_lock(false);
+        if (!logged_waiting_pipeline_lock.exchange(true)) {
+          std::cout << "lidar_stage=waiting_pipeline_lock timestamp_us=" << lidar.timestamp_us << std::endl;
         }
-        print_status(selected_timestamp_us, count_objects(output_json));
       }
-      if (cfg_.max_frames >= 0 && synced_frames_ >= cfg_.max_frames) {
-        std::cerr << "Reached max_frames=" << cfg_.max_frames << ". Exiting." << std::endl;
-        std::exit(0);
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (is_camera) {
+          synced = pipeline_.add_camera(camera, &output_json);
+        } else if (is_lidar) {
+          static std::atomic<bool> logged_enter_pipeline(false);
+          if (!logged_enter_pipeline.exchange(true)) {
+            std::cout << "lidar_stage=enter_pipeline timestamp_us=" << lidar.timestamp_us << std::endl;
+          }
+          synced = pipeline_.add_lidar(lidar, &output_json);
+          static std::atomic<bool> logged_pipeline_return(false);
+          if (!logged_pipeline_return.exchange(true)) {
+            std::cout << "lidar_stage=pipeline_return synced=" << (synced ? "true" : "false") << std::endl;
+          }
+        }
+
+        if (!synced) return;
+        ++synced_frames_;
+        if (dry_run_) {
+          print_status(selected_timestamp_us, -1);
+        } else if (!output_json.empty() || cfg_.publish_empty_frame) {
+          if (publisher_) publisher_->publish(output_json);
+          if (output_file_) {
+            output_file_ << output_json << "\n";
+            output_file_.flush();
+          }
+          print_status(selected_timestamp_us, count_objects(output_json));
+        }
+        if (cfg_.max_frames >= 0 && synced_frames_ >= cfg_.max_frames) {
+          std::cerr << "Reached max_frames=" << cfg_.max_frames << ". Exiting." << std::endl;
+          std::exit(0);
+        }
       }
-    } catch (const rscl_adapter::VideoFrameNotReady&) {
+    } catch (const rscl_adapter::VideoFrameNotReady& e) {
+      std::lock_guard<std::mutex> debug_lock(debug_mutex_);
+      if (message_debug_ && (message_debug_limit_ < 0 || video_not_ready_debug_count_ < message_debug_limit_)) {
+        ++video_not_ready_debug_count_;
+        std::cerr << "video_decode_wait topic=" << msg.topic << " reason=" << e.what() << std::endl;
+      }
       return;
     } catch (const std::exception& e) {
+      std::lock_guard<std::mutex> debug_lock(debug_mutex_);
       ++decode_errors_;
       std::cerr << "failed to process topic=" << msg.topic << " error=" << e.what() << std::endl;
     }
   }
-
   void set_decode_only(bool value) { decode_only_ = value; }
 
  private:
   void print_message_debug(const rscl_adapter::BagMessage& msg) {
+    std::lock_guard<std::mutex> debug_lock(debug_mutex_);
     if (!message_debug_) return;
     if (message_debug_limit_ >= 0 && message_debug_count_ >= message_debug_limit_) return;
     ++message_debug_count_;
@@ -341,8 +432,13 @@ class OnlineRunner {
     const double now = static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
     if (last_print_time_ > 0.0 && print_interval_s_ > 0.0 && now - last_print_time_ < print_interval_s_) return;
     last_print_time_ = now;
+    int decode_errors = 0;
+    {
+      std::lock_guard<std::mutex> debug_lock(debug_mutex_);
+      decode_errors = decode_errors_;
+    }
     std::cout << "synced_frames=" << synced_frames_ << " timestamp_us=" << timestamp_us
-              << " decode_errors=" << decode_errors_;
+              << " decode_errors=" << decode_errors;
     if (objects >= 0) std::cout << " objects=" << objects;
     std::cout << std::endl;
   }
@@ -353,12 +449,16 @@ class OnlineRunner {
   bool message_debug_ = false;
   int message_debug_limit_ = 100;
   int message_debug_count_ = 0;
+  int video_not_ready_debug_count_ = 0;
   TimestampSource timestamp_source_ = TimestampSource::kAuto;
   rscl_adapter::BevFusionPipeline pipeline_;
   std::map<std::string, std::unique_ptr<rscl_adapter::StatefulCameraDecoder> > camera_decoders_;
+  std::map<std::string, std::unique_ptr<std::mutex> > camera_decoder_mutexes_;
+  std::mutex lidar_decoder_mutex_;
   std::unique_ptr<rscl_adapter::OnlinePublisher> publisher_;
   std::ofstream output_file_;
   std::mutex mutex_;
+  std::mutex debug_mutex_;
   int synced_frames_ = 0;
   int decode_errors_ = 0;
   double print_interval_s_ = 1.0;
@@ -407,6 +507,7 @@ int main(int argc, char** argv) {
               << " node=" << cfg.node_name << " module=" << cfg.module_name << " cameras=" << cfg.camera_topics.size()
               << " lidar=" << cfg.lidar_topic << " output=" << cfg.output_topic
               << " sync_tolerance_ms=" << cfg.sync_tolerance_ms << " dry_run=" << (dry_run ? "true" : "false")
+              << " undistort_images=" << (cfg.undistort_images ? "true" : "false")
               << " timestamp_source=" << timestamp_source_name(args.timestamp_source)
               << std::endl;
     std::cerr << "online_node stage=spin" << std::endl;

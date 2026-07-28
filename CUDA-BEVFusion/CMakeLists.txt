@@ -30,6 +30,7 @@ option(BUILD_RSCL_CPP "Build the C++ RSCL adapter core library" ON)
 option(BUILD_RSCL_BAG_RUNNER "Build the C++ rsclbag offline runner" ON)
 option(BUILD_RSCL_ONLINE_NODE "Build the C++ RSCL online inference node" ON)
 option(RSCL_ENABLE_FFMPEG_DECODER "Enable FFmpeg-based H264/H265 camera decoding for the C++ RSCL adapter" ON)
+option(RSCL_ENABLE_OPENCV_UNDISTORT "Enable OpenCV camera undistortion for the C++ RSCL adapter" OFF)
 set(RSCL_BAG_BACKEND_SOURCE "" CACHE STRING "Optional source file implementing rscl_adapter::create_rscl_bag_reader with the vehicle RSCL SDK")
 set(RSCL_ONLINE_BACKEND_SOURCE "" CACHE STRING "Optional source file implementing the dlopen-loaded RSCL online backend")
 set(RSCL_RELEASE_ROOT "" CACHE PATH "Optional 695_x86 release directory or extracted SenseAuto package root")
@@ -44,6 +45,12 @@ set(RSCL_ONLINE_SDK_LIBRARIES "" CACHE STRING "Optional RSCL SDK libraries for l
 set(RSCL_FFMPEG_ROOT "$ENV{RSCL_FFMPEG_ROOT}" CACHE PATH "Optional FFmpeg root for RSCL camera decoder")
 set(RSCL_FFMPEG_INCLUDE_DIR "" CACHE PATH "Optional FFmpeg include directory")
 set(RSCL_FFMPEG_LIBRARY_DIR "" CACHE PATH "Optional FFmpeg library directory")
+set(RSCL_OPENCV_ROOT "$ENV{RSCL_OPENCV_ROOT}" CACHE PATH "Optional target OpenCV root for camera undistortion")
+set(RSCL_OPENCV_INCLUDE_DIR "" CACHE PATH "Optional target OpenCV include directory")
+set(RSCL_OPENCV_LIBRARY_DIR "" CACHE PATH "Optional target OpenCV library directory")
+set(RSCL_OPENCV_CORE_LIBRARY "" CACHE FILEPATH "Optional target OpenCV core library")
+set(RSCL_OPENCV_IMGPROC_LIBRARY "" CACHE FILEPATH "Optional target OpenCV imgproc library")
+set(RSCL_OPENCV_CALIB3D_LIBRARY "" CACHE FILEPATH "Optional target OpenCV calib3d library")
 set(BEVFUSION_TARGET_ARCH "" CACHE STRING "Target runtime architecture. Defaults to CMAKE_SYSTEM_PROCESSOR, then CMAKE_HOST_SYSTEM_PROCESSOR")
 set(BEVFUSION_SPCONV_ROOT "../libraries/3DSparseConvolution/libspconv" CACHE PATH "Path to the libspconv root directory")
 set(BEVFUSION_SPCONV_ARCH "" CACHE STRING "Architecture directory prefix used under libspconv/lib, for example x86_64 or aarch64")
@@ -271,7 +278,13 @@ set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
 )
 foreach(cuda_arch ${BEVFUSION_CUDA_ARCHS})
   if(NOT "${cuda_arch}" STREQUAL "")
-    list(APPEND CUDA_NVCC_FLAGS -gencode arch=compute_${cuda_arch},code=compute_${cuda_arch})
+    # Embed a native cubin for the selected GPU so deployment does not depend
+    # on the target having the NVIDIA PTX JIT compiler installed. Keep PTX as
+    # a forward-compatible fallback for environments that do provide the JIT.
+    list(APPEND CUDA_NVCC_FLAGS
+      -gencode arch=compute_${cuda_arch},code=sm_${cuda_arch}
+      -gencode arch=compute_${cuda_arch},code=compute_${cuda_arch}
+    )
   endif()
 endforeach()
 message(STATUS "BEVFUSION_CUDA_ARCHS = ${BEVFUSION_CUDA_ARCHS}")
@@ -731,6 +744,61 @@ if(RSCL_ENABLE_FFMPEG_DECODER)
   endif()
 endif()
 
+set(RSCL_OPENCV_LIBRARIES "")
+if(RSCL_ENABLE_OPENCV_UNDISTORT)
+  set(RSCL_OPENCV_HINT_INCLUDE_DIRS "")
+  set(RSCL_OPENCV_HINT_LIBRARY_DIRS "")
+  if(NOT "${RSCL_OPENCV_INCLUDE_DIR}" STREQUAL "")
+    list(APPEND RSCL_OPENCV_HINT_INCLUDE_DIRS "${RSCL_OPENCV_INCLUDE_DIR}")
+  endif()
+  if(NOT "${RSCL_OPENCV_LIBRARY_DIR}" STREQUAL "")
+    list(APPEND RSCL_OPENCV_HINT_LIBRARY_DIRS "${RSCL_OPENCV_LIBRARY_DIR}")
+  endif()
+  if(NOT "${RSCL_OPENCV_ROOT}" STREQUAL "")
+    list(APPEND RSCL_OPENCV_HINT_INCLUDE_DIRS
+      "${RSCL_OPENCV_ROOT}/include/opencv4"
+      "${RSCL_OPENCV_ROOT}/include"
+    )
+    list(APPEND RSCL_OPENCV_HINT_LIBRARY_DIRS
+      "${RSCL_OPENCV_ROOT}/lib"
+      "${RSCL_OPENCV_ROOT}/lib64"
+    )
+  endif()
+
+  find_path(RSCL_OPENCV_DETECTED_INCLUDE_DIR opencv2/calib3d.hpp
+    HINTS ${RSCL_OPENCV_HINT_INCLUDE_DIRS}
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+  if("${RSCL_OPENCV_CORE_LIBRARY}" STREQUAL "")
+    find_library(RSCL_OPENCV_CORE_LIBRARY opencv_core
+      HINTS ${RSCL_OPENCV_HINT_LIBRARY_DIRS} NO_CMAKE_FIND_ROOT_PATH)
+  endif()
+  if("${RSCL_OPENCV_IMGPROC_LIBRARY}" STREQUAL "")
+    find_library(RSCL_OPENCV_IMGPROC_LIBRARY opencv_imgproc
+      HINTS ${RSCL_OPENCV_HINT_LIBRARY_DIRS} NO_CMAKE_FIND_ROOT_PATH)
+  endif()
+  if("${RSCL_OPENCV_CALIB3D_LIBRARY}" STREQUAL "")
+    find_library(RSCL_OPENCV_CALIB3D_LIBRARY opencv_calib3d
+      HINTS ${RSCL_OPENCV_HINT_LIBRARY_DIRS} NO_CMAKE_FIND_ROOT_PATH)
+  endif()
+
+  if(RSCL_OPENCV_DETECTED_INCLUDE_DIR AND RSCL_OPENCV_CORE_LIBRARY AND
+     RSCL_OPENCV_IMGPROC_LIBRARY AND RSCL_OPENCV_CALIB3D_LIBRARY)
+    add_definitions(-DRSCL_HAVE_OPENCV_UNDISTORT)
+    include_directories(${RSCL_OPENCV_DETECTED_INCLUDE_DIR})
+    set(RSCL_OPENCV_LIBRARIES
+      ${RSCL_OPENCV_CALIB3D_LIBRARY}
+      ${RSCL_OPENCV_IMGPROC_LIBRARY}
+      ${RSCL_OPENCV_CORE_LIBRARY}
+    )
+    message(STATUS "RSCL OpenCV undistortion enabled")
+  else()
+    message(FATAL_ERROR
+      "RSCL_ENABLE_OPENCV_UNDISTORT=ON but target OpenCV core/imgproc/calib3d headers or libraries were not found. "
+      "Set RSCL_OPENCV_ROOT, or explicit RSCL_OPENCV_* paths.")
+  endif()
+endif()
+
 file(GLOB_RECURSE CORE_FILES 
   src/bevfusion/*.cu 
   src/bevfusion/*.cpp
@@ -845,6 +913,7 @@ if(BUILD_RSCL_CPP)
     ${Protobuf_LIBRARIES}
     ${TensorRT_NVINFER_PLUGIN_LIBRARY}
     ${RSCL_FFMPEG_LIBRARIES}
+    ${RSCL_OPENCV_LIBRARIES}
     ${BEVFUSION_EXTRA_LINK_LIBRARIES}
     ${CMAKE_DL_LIBS}
   )
@@ -882,6 +951,7 @@ if(BUILD_RSCL_CPP)
       ${Protobuf_LIBRARIES}
       ${TensorRT_NVINFER_PLUGIN_LIBRARY}
       ${RSCL_FFMPEG_LIBRARIES}
+      ${RSCL_OPENCV_LIBRARIES}
       ${RSCL_SDK_LINK_LIBRARIES}
       ${BEVFUSION_EXTRA_LINK_LIBRARIES}
       ${CMAKE_DL_LIBS}
@@ -923,6 +993,7 @@ if(BUILD_RSCL_CPP)
       ${Protobuf_LIBRARIES}
       ${TensorRT_NVINFER_PLUGIN_LIBRARY}
       ${RSCL_FFMPEG_LIBRARIES}
+      ${RSCL_OPENCV_LIBRARIES}
       ${BEVFUSION_EXTRA_LINK_LIBRARIES}
       ${CMAKE_DL_LIBS}
     )

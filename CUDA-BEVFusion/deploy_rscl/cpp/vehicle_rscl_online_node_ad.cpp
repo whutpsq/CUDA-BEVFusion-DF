@@ -14,6 +14,10 @@
 #include <utility>
 #include <vector>
 
+#include <capnp/serialize.h>
+#include <kj/array.h>
+
+#include "ad_msg_idl/ad_sensor/sensor.capnp.h"
 #include "ad_rscl/comm/node.h"
 #include "ad_rscl/runtime.h"
 #include "ad_service_discovery/service_discovery/service_discovery.h"
@@ -70,6 +74,52 @@ static size_t payload_size_without_rscl_header(const char* data, size_t size, in
   return size > trailer_size ? size - trailer_size : size;
 }
 
+static bool decode_lidar_capnp_message(const char* data, size_t size, BagMessage* out) {
+  if (data == nullptr || size == 0 || out == nullptr) return false;
+
+  try {
+    // Copy into aligned Cap'n Proto words because RawMessage exposes bytes as
+    // char* and does not guarantee capnp::word alignment.
+    const size_t word_count = (size + sizeof(capnp::word) - 1) / sizeof(capnp::word);
+    kj::Array<capnp::word> words = kj::heapArray<capnp::word>(word_count);
+    std::memset(words.begin(), 0, word_count * sizeof(capnp::word));
+    std::memcpy(words.begin(), data, size);
+
+    capnp::FlatArrayMessageReader reader(words.asPtr());
+    senseAD::msg::sensor::AdsfiLidarPointCloud::Reader cloud =
+        reader.getRoot<senseAD::msg::sensor::AdsfiLidarPointCloud>();
+    if (!cloud.hasData()) return false;
+
+    const capnp::Data::Reader point_data = cloud.getData();
+    out->payload.assign(point_data.begin(), point_data.end());
+    out->raw_payload = out->payload;
+    out->point_step = static_cast<int>(cloud.getPointStep());
+    out->point_width = static_cast<int>(cloud.getWidth());
+    out->message_type = "CAPNP@AdsfiLidarPointCloud_13564378383716798607_2180624248";
+
+    if (cloud.hasHeader()) {
+      const senseAD::msg::std_msgs::Header::Reader header = cloud.getHeader();
+      if (header.hasTime()) {
+        out->timestamp_us = static_cast<int64_t>(header.getTime().getNanoSec() / 1000ULL);
+      }
+    }
+
+    static std::atomic<bool> logged_success(false);
+    if (!logged_success.exchange(true)) {
+      raw_log("ad_rscl_backend stage=typed_lidar_decode_enabled point_step=" +
+              std::to_string(out->point_step) + " width=" + std::to_string(out->point_width) +
+              " data_bytes=" + std::to_string(out->payload.size()));
+    }
+    return true;
+  } catch (const std::exception& e) {
+    static std::atomic<bool> logged_failure(false);
+    if (!logged_failure.exchange(true)) {
+      raw_log("ad_rscl_backend stage=typed_lidar_decode_failed error=" + std::string(e.what()));
+    }
+    return false;
+  }
+}
+
 class AdRsclPublisher : public OnlinePublisher {
  public:
   explicit AdRsclPublisher(std::shared_ptr<RawPublisher> publisher) : publisher_(std::move(publisher)) {
@@ -117,9 +167,16 @@ class AdRsclOnlineNode : public OnlineNode {
     }
 
     raw_log("ad_rscl_backend stage=create_subscriber topic=" + topic + " type=" + message_type);
+    // RSCL may invoke callbacks for the same topic concurrently. Dynamic
+    // reflection expands large LiDAR messages substantially, so allowing many
+    // same-topic callbacks to reflect and decode at once can consume gigabytes
+    // of memory. Serialize each topic independently; different camera topics
+    // and the LiDAR topic can still run in parallel.
+    std::shared_ptr<std::mutex> topic_callback_mutex(new std::mutex());
     auto sub = node_->CreateSubscriber<RawMessage>(
-        topic, [this, topic, callback](const std::shared_ptr<RawReceivedMsg>& msg) {
+        topic, [this, topic, callback, topic_callback_mutex](const std::shared_ptr<RawReceivedMsg>& msg) {
           if (!msg || !msg->IsValid()) return;
+          std::lock_guard<std::mutex> topic_callback_lock(*topic_callback_mutex);
           const char* bytes = msg->Bytes();
           const size_t byte_size = msg->ByteSize();
           int64_t header_stamp_us = 0;
@@ -129,6 +186,18 @@ class AdRsclOnlineNode : public OnlineNode {
           out.topic = topic;
           out.timestamp_us = header_stamp_us;
           out.receive_timestamp_us = now_us();
+
+          // Avoid expanding LiDAR Cap'n Proto data into a ~900 KB JSON string.
+          // The typed path extracts timestamp, layout, and point bytes directly.
+          if (topic == cfg_.lidar_topic && decode_lidar_capnp_message(bytes, byte_size, &out)) {
+            static std::atomic<bool> logged_typed_callback(false);
+            const bool log_this_callback = !logged_typed_callback.exchange(true);
+            if (log_this_callback) raw_log("ad_rscl_backend stage=typed_lidar_callback_begin");
+            callback(out);
+            if (log_this_callback) raw_log("ad_rscl_backend stage=typed_lidar_callback_done");
+            return;
+          }
+
           std::string reflected_json;
           std::string reflected_type;
           if (bytes && payload_size > 0 && reflect_message_to_json(topic, bytes, payload_size, &reflected_json, &reflected_type)) {
@@ -272,10 +341,18 @@ std::unique_ptr<OnlineNode> create_rscl_online_node(const AdapterConfig& cfg) {
   return std::unique_ptr<OnlineNode>(new AdRsclOnlineNode(cfg));
 }
 
+// The C factory must not call the externally visible C++ factory by symbol.
+// Without RTLD_DEEPBIND that name can interpose with the executable's dlopen
+// wrapper and recursively load this backend until stack overflow. Keep this
+// raw factory translation-unit local so the call cannot be interposed.
+static OnlineNode* create_rscl_online_node_backend_raw(const AdapterConfig& cfg) {
+  return new AdRsclOnlineNode(cfg);
+}
+
 }  // namespace rscl_adapter
 
 extern "C" rscl_adapter::OnlineNode* rscl_adapter_create_online_node(
     const rscl_adapter::AdapterConfig* cfg) {
   if (cfg == nullptr) return nullptr;
-  return rscl_adapter::create_rscl_online_node(*cfg).release();
+  return rscl_adapter::create_rscl_online_node_backend_raw(*cfg);
 }

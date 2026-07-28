@@ -3,6 +3,7 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
+#include <atomic>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -196,22 +197,33 @@ BevFusionRunner::~BevFusionRunner() = default;
 InferenceOutput BevFusionRunner::infer(const ModelInput& input) {
   if (input.points.empty()) throw std::runtime_error("Cannot run BEVFusion with empty lidar point cloud");
 
+  static std::atomic<bool> logged_first_infer(false);
+  const bool log_first_infer = !logged_first_infer.exchange(true);
   const int num_points = static_cast<int>(input.points.size() / 5);
+  if (log_first_infer) {
+    std::cout << "runner_stage=infer_begin num_points=" << num_points
+              << " image_values=" << input.images_chw.size() << std::endl;
+  }
   std::vector<float> image_host = input.images_chw;
   std::vector<nvtype::half> point_host = floats_to_host_half(input.points);
+  if (log_first_infer) std::cout << "runner_stage=host_conversion_done" << std::endl;
   nv::Tensor images = nv::Tensor::from_data_reference(
       image_host.data(), std::vector<int64_t>{1, input.num_cameras, 3, input.image_height, input.image_width},
       nv::DataType::Float32, false);
   images.to_device_(impl_->stream);
   images = images.to_half(impl_->stream);
+  if (log_first_infer) std::cout << "runner_stage=image_upload_done" << std::endl;
 
   impl_->core->update(input.camera2lidar.data(), input.camera_intrinsics.data(), input.lidar2image.data(),
                       input.img_aug_matrix.data(), impl_->stream);
+  if (log_first_infer) std::cout << "runner_stage=core_update_done" << std::endl;
 
   InferenceOutput output;
   if (impl_->cfg.enable_object_detection) {
+    if (log_first_infer) std::cout << "runner_stage=forward_bbox_begin" << std::endl;
     std::vector<bevfusion::head::transbbox::BoundingBox> boxes =
         impl_->core->forward_no_normalize(images.ptr<nvtype::half>(), point_host.data(), num_points, impl_->stream);
+    if (log_first_infer) std::cout << "runner_stage=forward_bbox_done boxes=" << boxes.size() << std::endl;
     output.detections.reserve(boxes.size());
     for (size_t i = 0; i < boxes.size(); ++i) {
       Detection det;
@@ -240,7 +252,9 @@ InferenceOutput BevFusionRunner::infer(const ModelInput& input) {
       output.map.data[i] = map.data[i] >= impl_->cfg.map_score_threshold ? 1 : 0;
     }
   }
+  if (log_first_infer) std::cout << "runner_stage=stream_sync_begin" << std::endl;
   checkRuntime(cudaStreamSynchronize(impl_->stream));
+  if (log_first_infer) std::cout << "runner_stage=stream_sync_done" << std::endl;
   return output;
 }
 

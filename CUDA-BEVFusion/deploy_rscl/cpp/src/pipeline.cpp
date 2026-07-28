@@ -1,5 +1,7 @@
 #include "rscl_adapter/pipeline.hpp"
 
+#include <atomic>
+#include <iostream>
 #include <stdexcept>
 
 #include "rscl_adapter/codecs.hpp"
@@ -40,8 +42,20 @@ bool BevFusionPipeline::process_frame(const SyncedFrame& frame, std::string* out
     return true;
   }
   if (!runner_) throw std::runtime_error("BevFusionPipeline runner is not initialized");
+
+  static std::atomic<bool> logged_first_inference(false);
+  const bool log_first_inference = !logged_first_inference.exchange(true);
+  if (log_first_inference) std::cout << "inference_stage=build_model_input_begin" << std::endl;
   ModelInput input = build_model_input(frame, cfg_, calibration_);
+  if (log_first_inference) {
+    std::cout << "inference_stage=build_model_input_done images=" << input.images_chw.size()
+              << " points=" << input.points.size() << " cameras=" << input.num_cameras << std::endl;
+    std::cout << "inference_stage=runner_infer_begin" << std::endl;
+  }
   InferenceOutput output = runner_->infer(input);
+  if (log_first_inference) {
+    std::cout << "inference_stage=runner_infer_done detections=" << output.detections.size() << std::endl;
+  }
   const bool has_objects = !output.detections.empty();
   if (!has_objects && !output.has_map && !cfg_.publish_empty_frame) {
     if (output_json) *output_json = "";

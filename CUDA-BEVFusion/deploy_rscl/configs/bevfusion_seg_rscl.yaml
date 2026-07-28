@@ -67,7 +67,8 @@ image_size: [256, 704]
 image_resize: 0.48
 image_mean: [0.485, 0.456, 0.406]
 image_std: [0.229, 0.224, 0.225]
-undistort_images: false
+# Raw vehicle images must match the training pipeline's undistort=true.
+undistort_images: true
 
 point_dim: 4
 point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]

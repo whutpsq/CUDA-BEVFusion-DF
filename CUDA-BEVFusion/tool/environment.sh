@@ -58,8 +58,8 @@ export CUDNN_Lib=$CUDA_HOME/lib64
 export SPCONV_CUDA_VERSION=11.4
 
 # resnet50/resnet50int8/swint/bevfusion_df/bevfusion_df_seg
-export DEBUG_MODEL=bevfusion_df
-export DEBUG_PROFILE=bevfusion_df
+export DEBUG_MODEL=bevfusion_df_detect_0723
+export DEBUG_PROFILE=bevfusion_df_detect_0723
 
 # fp16/int8
 export DEBUG_PRECISION=fp16

@@ -96,9 +96,12 @@ first, then pass decoded RGB/BGR/NV12 bytes to `decode_camera_packet`.
 
 ## Notes
 
-- `undistort_images: true` is intentionally rejected in the C++ adapter for now.
-  Use rectified camera streams, or add an OpenCV-backed branch in
-  `deploy_rscl/cpp/src/preprocess.cpp` if the vehicle runtime provides OpenCV.
+- `undistort_images: true` uses OpenCV's 8-coefficient rational pinhole model
+  (`k1,k2,p1,p2,k3,k4,k5,k6`) and caches one fixed-point remap per camera and
+  input resolution. Build with `RSCL_ENABLE_OPENCV_UNDISTORT=ON` and provide
+  target `opencv_core`, `opencv_imgproc`, and `opencv_calib3d`. The Thor build
+  script enables this by default and discovers OpenCV under the SenseAuto
+  third-party package; set `RSCL_OPENCV_ROOT` to override it.
 - `camera_topics` and `camera_order` must have the same length and order as the
   model calibration.
 - The C++ runner mirrors `src/python.cpp::BEVFusion::load`, including the
