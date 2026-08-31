@@ -508,6 +508,9 @@ int main(int argc, char** argv) {
               << " lidar=" << cfg.lidar_topic << " output=" << cfg.output_topic
               << " sync_tolerance_ms=" << cfg.sync_tolerance_ms << " dry_run=" << (dry_run ? "true" : "false")
               << " undistort_images=" << (cfg.undistort_images ? "true" : "false")
+              << " image_preprocess_size=" << cfg.image_preprocess_height << "x" << cfg.image_preprocess_width
+              << " image_resize=" << cfg.image_resize
+              << " image_size=" << cfg.image_height << "x" << cfg.image_width
               << " timestamp_source=" << timestamp_source_name(args.timestamp_source)
               << std::endl;
     std::cerr << "online_node stage=spin" << std::endl;

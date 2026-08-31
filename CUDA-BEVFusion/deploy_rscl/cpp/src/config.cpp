@@ -82,6 +82,13 @@ static void set_image_size(const JsonValue& root, AdapterConfig* cfg) {
   cfg->image_width = static_cast<int>(v->array[1].as_number(cfg->image_width));
 }
 
+static void set_image_preprocess_size(const JsonValue& root, AdapterConfig* cfg) {
+  const JsonValue* v = get(root, "image_preprocess_size");
+  if (!v || !v->is_array() || v->array.size() < 2) return;
+  cfg->image_preprocess_height = static_cast<int>(v->array[0].as_number(cfg->image_preprocess_height));
+  cfg->image_preprocess_width = static_cast<int>(v->array[1].as_number(cfg->image_preprocess_width));
+}
+
 }  // namespace
 
 AdapterConfig load_adapter_config(const std::string& path) {
@@ -125,6 +132,7 @@ AdapterConfig load_adapter_config(const std::string& path) {
   set_int(root, "sync_debug_limit", &cfg.sync_debug_limit);
   set_int(root, "sync_queue_size", &cfg.sync_queue_size);
   set_image_size(root, &cfg);
+  set_image_preprocess_size(root, &cfg);
   set_float(root, "image_resize", &cfg.image_resize);
   set_float_vector_fixed(root, "image_mean", cfg.image_mean, 3);
   set_float_vector_fixed(root, "image_std", cfg.image_std, 3);

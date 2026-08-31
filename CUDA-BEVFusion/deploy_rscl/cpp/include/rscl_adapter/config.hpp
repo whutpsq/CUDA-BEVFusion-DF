@@ -51,6 +51,10 @@ struct AdapterConfig {
   int sync_queue_size = 30;
   int image_height = 128;
   int image_width = 352;
+  // Optional training-time raw-resolution normalization applied before
+  // image_resize. A zero size keeps the legacy single-stage preprocessing.
+  int image_preprocess_height = 0;
+  int image_preprocess_width = 0;
   float image_resize = 0.48f;
   float image_mean[3] = {0.485f, 0.456f, 0.406f};
   float image_std[3] = {0.229f, 0.224f, 0.225f};

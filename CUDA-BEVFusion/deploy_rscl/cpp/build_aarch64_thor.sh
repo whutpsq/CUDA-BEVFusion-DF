@@ -321,6 +321,16 @@ cmake_args=(
   "-DCMAKE_EXE_LINKER_FLAGS=$thor_link_flags"
   "-DBEVFUSION_PROTOBUF_ROOT=$protobuf_root"
   "-DCUDA_TOOLKIT_ROOT_DIR=$cuda_root"
+  # CMake 3.21 FindCUDA still assumes the legacy $CUDA_HOME/include/lib
+  # layout. Thor keeps target headers and cudart under
+  # targets/aarch64-linux, so seed both FindCUDA's public and internal cache
+  # variables explicitly for cross compilation.
+  "-DCUDA_NVCC_EXECUTABLE=$cuda_root/bin/nvcc"
+  "-DCUDA_TOOLKIT_INCLUDE=$cuda_include"
+  "-DCUDA_INCLUDE_DIRS=$cuda_include"
+  "-DCUDA_CUDART_LIBRARY=$cudart_library"
+  "-DCUDA_CUDA_LIBRARY=$cuda_driver_library"
+  "-DCUDA_LIBRARIES=$cudart_library"
   "-DTensorRT_INCLUDE_DIR=$tensorrt_root/include"
   "-DTensorRT_NVINFER_LIBRARY=$tensorrt_root/lib/stubs/libnvinfer.so"
   "-DTensorRT_NVINFER_PLUGIN_LIBRARY=$tensorrt_root/lib/stubs/libnvinfer_plugin.so"

@@ -72,11 +72,17 @@ score_threshold: 0.2
 publish_empty_frame: true
 
 image_size: [256, 704]
-image_resize: 0.48
+# Match the custom-dataset test pipeline exactly:
+# ResizeCropMultiViewImageToFixedSize(size=[1080, 1920], crop_mode=bottom)
+# followed by ImageAug3D(resize_lim=[0.40, 0.40], final_dim=[256, 704]).
+image_preprocess_size: [1080, 1920]
+image_resize: 0.40
 image_mean: [0.485, 0.456, 0.406]
 image_std: [0.229, 0.224, 0.225]
 # Raw vehicle images must match the training pipeline's undistort=true.
 undistort_images: true
+# /perception/lidar/preproc_points_cloud is already in the training model's
+# car_center reference frame. Do not apply the physical top-LiDAR transform.
 point_dim: 4
 point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 

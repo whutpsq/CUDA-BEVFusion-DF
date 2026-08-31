@@ -67,6 +67,7 @@ class DetectionVisualizer:
         camera_line_width: int = 8,
         bev_line_width: int = 6,
         font_size: int = 30,
+        timestamp_tolerance_ms: float = 2.0,
     ) -> None:
         self.cfg = cfg
         self.output_dir = Path(output_dir)
@@ -78,6 +79,8 @@ class DetectionVisualizer:
         self.records_by_timestamp = {
             int(record["timestamp_us"]): record for record in self.records if "timestamp_us" in record
         }
+        self.record_timestamps = sorted(self.records_by_timestamp)
+        self.timestamp_tolerance_us = max(0, int(timestamp_tolerance_ms * 1000.0))
         self.sync = FrameSynchronizer(
             camera_topics=cfg.camera_topics,
             camera_order=cfg.camera_order,
@@ -120,6 +123,48 @@ class DetectionVisualizer:
                 break
         print(f"visualized_frames={self.frames} decode_errors={self.decode_errors} output_dir={self.output_dir}")
 
+    def run_exported(self, frames_dir: str) -> None:
+        root = Path(frames_dir)
+        manifests = sorted(root.glob("frame_*/frame.json"))
+        if not manifests:
+            raise RuntimeError(f"No exported frame manifests found under: {root}")
+
+        unmatched = 0
+        for manifest_path in manifests:
+            metadata = json.loads(manifest_path.read_text(encoding="utf-8"))
+            frame_root = manifest_path.parent
+            timestamp_us = int(metadata["timestamp_us"])
+            point_dim = int(metadata["lidar_point_dim"])
+            lidar = np.fromfile(frame_root / metadata["lidar_file"], dtype=np.float32)
+            if point_dim < 3 or lidar.size % point_dim != 0:
+                raise ValueError(
+                    f"Invalid lidar export at {frame_root}: floats={lidar.size} point_dim={point_dim}"
+                )
+            lidar = lidar.reshape(-1, point_dim)
+
+            camera_files = {entry["name"]: entry["file"] for entry in metadata["cameras"]}
+            cameras: Dict[str, Image.Image] = {}
+            for camera_name in self.cfg.camera_order:
+                if camera_name not in camera_files:
+                    raise KeyError(f"Exported frame {frame_root} misses camera {camera_name!r}")
+                with Image.open(frame_root / camera_files[camera_name]) as image:
+                    cameras[camera_name] = image.convert("RGB").copy()
+
+            frame = SyncedFrame(timestamp_us=timestamp_us, cameras=cameras, lidar=lidar)
+            record = self._record_for_frame(frame)
+            if record is None:
+                unmatched += 1
+                continue
+            self._save_frame(frame, record)
+            self.frames += 1
+            if self.cfg.max_frames is not None and self.frames >= self.cfg.max_frames:
+                break
+
+        print(
+            f"visualized_frames={self.frames} unmatched_exported_frames={unmatched} "
+            f"output_dir={self.output_dir}"
+        )
+
     def _open_reader(self, rsclpy: Any, bag_path: str, channels: set[str]) -> Any:
         if hasattr(rsclpy, "BagReaderAttribute"):
             attr = rsclpy.BagReaderAttribute()
@@ -148,7 +193,15 @@ class DetectionVisualizer:
 
     def _record_for_frame(self, frame: SyncedFrame) -> Optional[Mapping[str, Any]]:
         if self.records_by_timestamp:
-            return self.records_by_timestamp.get(int(frame.timestamp_us))
+            timestamp_us = int(frame.timestamp_us)
+            exact = self.records_by_timestamp.get(timestamp_us)
+            if exact is not None:
+                return exact
+            if self.record_timestamps and self.timestamp_tolerance_us > 0:
+                nearest = min(self.record_timestamps, key=lambda value: abs(value - timestamp_us))
+                if abs(nearest - timestamp_us) <= self.timestamp_tolerance_us:
+                    return self.records_by_timestamp[nearest]
+            return None
         if self.frames < len(self.records):
             return self.records[self.frames]
         return None
@@ -398,13 +451,16 @@ def _draw_label(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize RSCL BEVFusion detections on camera images and lidar BEV.")
     parser.add_argument("--adapter-config", default="deploy_rscl/configs/bevfusion_resnet50_rscl.yaml")
-    parser.add_argument("--bag", required=True, help="Path to .rsclbag.")
-    parser.add_argument("--detections", required=True, help="JSONL file produced by rscl_bag_runner.")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--bag", help="Path to .rsclbag (requires rsclpy).")
+    source.add_argument("--frames-dir", help="Frames exported by the C++ rscl_bevfusion_bag_runner.")
+    parser.add_argument("--detections", required=True, help="BEVFusion detection JSONL.")
     parser.add_argument("--output-dir", default="runs/rsclbag_detection_visualization")
     parser.add_argument("--max-frames", type=int, help="Optional frame limit.")
     parser.add_argument("--camera-line-width", type=int, default=8)
     parser.add_argument("--bev-line-width", type=int, default=6)
     parser.add_argument("--font-size", type=int, default=30)
+    parser.add_argument("--timestamp-tolerance-ms", type=float, default=2.0)
     return parser.parse_args()
 
 
@@ -420,8 +476,12 @@ def main() -> None:
         camera_line_width=args.camera_line_width,
         bev_line_width=args.bev_line_width,
         font_size=args.font_size,
+        timestamp_tolerance_ms=args.timestamp_tolerance_ms,
     )
-    visualizer.run(args.bag)
+    if args.frames_dir:
+        visualizer.run_exported(args.frames_dir)
+    else:
+        visualizer.run(args.bag)
 
 
 if __name__ == "__main__":

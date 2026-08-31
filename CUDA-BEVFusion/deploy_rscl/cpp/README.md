@@ -106,6 +106,10 @@ first, then pass decoded RGB/BGR/NV12 bytes to `decode_camera_packet`.
   model calibration.
 - The C++ runner mirrors `src/python.cpp::BEVFusion::load`, including the
   `bevfusion_df` versus ResNet50 parameter branch.
+- For this custom dataset, the fused points, 3D boxes, and model reference are
+  all `car_center`. The NuScenes-compatible `lidar` field names mean the model
+  reference frame, not the physical top-center LiDAR frame. Do not apply the
+  physical `ego2lidar` transform before inference.
 
 ## Offline rsclbag Runner
 

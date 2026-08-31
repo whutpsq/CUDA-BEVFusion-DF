@@ -602,8 +602,19 @@ if(NOT "${RSCL_SDK_LIBRARIES}" STREQUAL "")
 endif()
 
 if("${RSCL_ONLINE_SDK_LIBRARIES}" STREQUAL "")
-  set(RSCL_ONLINE_SDK_LIBRARIES "ad_rscl;ad_serde;ad_serde_capnp" CACHE STRING "Optional RSCL SDK libraries for librscl_online_backend_ad.so" FORCE)
+  set(RSCL_ONLINE_SDK_LIBRARIES "ad_rscl;ad_serde;ad_serde_capnp;ad_rscl_pb;ad_mw_cyber;cyber" CACHE STRING "Optional RSCL SDK libraries for librscl_online_backend_ad.so" FORCE)
 endif()
+# Older build directories may already cache a shorter default.  These are
+# direct dependencies of code instantiated by the installed RSCL headers, so
+# executables must put these DSOs on their own link line.
+foreach(rscl_required_lib ad_rscl_pb ad_mw_cyber cyber)
+  if(NOT "${RSCL_SDK_ROOT}" STREQUAL "" AND EXISTS "${RSCL_SDK_ROOT}/lib/lib${rscl_required_lib}.so")
+    list(FIND RSCL_ONLINE_SDK_LIBRARIES "${rscl_required_lib}" RSCL_ONLINE_REQUIRED_LIB_INDEX)
+    if(RSCL_ONLINE_REQUIRED_LIB_INDEX EQUAL -1)
+      list(APPEND RSCL_ONLINE_SDK_LIBRARIES "${rscl_required_lib}")
+    endif()
+  endif()
+endforeach()
 set(RSCL_ONLINE_SDK_LINK_LIBRARIES "")
 if(NOT "${RSCL_ONLINE_SDK_LIBRARIES}" STREQUAL "")
   foreach(rscl_lib ${RSCL_ONLINE_SDK_LIBRARIES})
@@ -899,6 +910,8 @@ if(BUILD_RSCL_CPP)
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_online_node.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_online_node_dlopen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_online_node_stub.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_raw_echo.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_bag_frame_exporter.cpp
   )
 
   cuda_add_library(rscl_adapter_cpp STATIC
@@ -934,6 +947,11 @@ if(BUILD_RSCL_CPP)
       ${RSCL_BAG_BACKEND_SOURCE}
     )
     bevfusion_apply_extra_link_flags(rscl_bevfusion_bag_runner)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      set_property(TARGET rscl_bevfusion_bag_runner APPEND_STRING PROPERTY
+        LINK_FLAGS " -Wl,--copy-dt-needed-entries"
+      )
+    endif()
     add_dependencies(rscl_bevfusion_bag_runner custom_layernorm)
 
     if(NOT "${RSCL_SDK_TARGET_INCLUDE_DIRS}" STREQUAL "")
@@ -966,6 +984,40 @@ if(BUILD_RSCL_CPP)
       set_target_properties(rscl_bevfusion_bag_runner PROPERTIES
         BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
         INSTALL_RPATH "${CMAKE_CURRENT_BINARY_DIR}"
+      )
+    endif()
+
+    add_executable(rscl_bag_frame_exporter
+      deploy_rscl/cpp/src/rscl_bag_frame_exporter.cpp
+      deploy_rscl/cpp/src/config.cpp
+      deploy_rscl/cpp/src/json.cpp
+      deploy_rscl/cpp/src/codecs.cpp
+      deploy_rscl/cpp/src/sync.cpp
+      ${RSCL_BAG_BACKEND_SOURCE}
+    )
+    bevfusion_apply_extra_link_flags(rscl_bag_frame_exporter)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      set_property(TARGET rscl_bag_frame_exporter APPEND_STRING PROPERTY
+        LINK_FLAGS " -Wl,--copy-dt-needed-entries"
+      )
+    endif()
+    if(NOT "${RSCL_SDK_TARGET_INCLUDE_DIRS}" STREQUAL "")
+      target_include_directories(rscl_bag_frame_exporter PRIVATE
+        ${RSCL_SDK_TARGET_INCLUDE_DIRS}
+      )
+    endif()
+    target_link_libraries(rscl_bag_frame_exporter
+      ${RSCL_FFMPEG_LIBRARIES}
+      ${RSCL_OPENCV_LIBRARIES}
+      ${RSCL_SDK_LINK_LIBRARIES}
+      ${BEVFUSION_EXTRA_LINK_LIBRARIES}
+      ${CMAKE_DL_LIBS}
+    )
+    if(NOT "${RSCL_SDK_LIBRARY_DIRS}" STREQUAL "")
+      set_target_properties(rscl_bag_frame_exporter PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        BUILD_RPATH "${RSCL_SDK_LIBRARY_DIRS}"
+        INSTALL_RPATH "${RSCL_SDK_LIBRARY_DIRS}"
       )
     endif()
   endif()
@@ -1045,6 +1097,34 @@ if(BUILD_RSCL_CPP)
       endif()
     else()
       message(WARNING "RSCL online backend source was not found. rscl_bevfusion_online_node will build, but runtime dlopen will fail until librscl_online_backend_ad.so is provided or RSCL_ONLINE_BACKEND_LIB is set.")
+    endif()
+
+    add_executable(rscl_raw_echo
+      deploy_rscl/cpp/src/rscl_raw_echo.cpp
+    )
+    bevfusion_apply_extra_link_flags(rscl_raw_echo)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      # RSCL is distributed as a tree of shared libraries.  GNU ld otherwise
+      # refuses symbols supplied by their DT_NEEDED children one DSO at a time.
+      set_property(TARGET rscl_raw_echo APPEND_STRING PROPERTY
+        LINK_FLAGS " -Wl,--copy-dt-needed-entries"
+      )
+    endif()
+    if(NOT "${RSCL_SDK_TARGET_INCLUDE_DIRS}" STREQUAL "")
+      target_include_directories(rscl_raw_echo PRIVATE
+        ${RSCL_SDK_TARGET_INCLUDE_DIRS}
+      )
+    endif()
+    target_link_libraries(rscl_raw_echo
+      ${RSCL_ONLINE_SDK_LINK_LIBRARIES}
+      ${BEVFUSION_EXTRA_LINK_LIBRARIES}
+    )
+    if(NOT "${RSCL_SDK_LIBRARY_DIRS}" STREQUAL "")
+      set_target_properties(rscl_raw_echo PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        BUILD_RPATH "${RSCL_SDK_LIBRARY_DIRS}"
+        INSTALL_RPATH "${RSCL_SDK_LIBRARY_DIRS}"
+      )
     endif()
   endif()
 endif()

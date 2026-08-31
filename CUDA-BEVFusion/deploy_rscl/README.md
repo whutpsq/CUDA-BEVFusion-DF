@@ -251,6 +251,31 @@ Each output frame directory contains:
 - `lidar_bev_detections.png`
 - `detections.json`
 
+If the target has the native RSCL C++ SDK but no `rsclpy`, first export
+synchronized decoded sensor frames without running inference:
+
+```bash
+./build_rscl/rscl_bag_frame_exporter \
+  --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml \
+  --bag /workspace/mybag.000.rsclbag \
+  --output-dir /tmp/bevfusion_exported_frames \
+  --max-frames 20
+```
+
+Then render the detections already extracted from the recorded output topic:
+
+```bash
+python3 -m deploy_rscl.visualize_detections \
+  --adapter-config deploy_rscl/configs/bevfusion_rscl.yaml \
+  --frames-dir /tmp/bevfusion_exported_frames \
+  --detections /tmp/bevfusion_objects.jsonl \
+  --output-dir /tmp/bevfusion_objects_vis \
+  --max-frames 20
+```
+
+This path reads ordinary JPEG, float32 lidar, and JSON files in Python, so it
+does not require `rsclpy` and does not rerun BEVFusion.
+
 ## Online RSCL Node
 
 Run directly:
@@ -382,3 +407,41 @@ stored extrinsic direction is opposite of the config.
 `undistort_images` defaults to `false`. Set it to `true` only when RSCL camera
 frames are raw distorted images and OpenCV is available in the runtime
 environment. Leave it `false` if the camera stream is already rectified.
+
+### Match the custom-dataset image pipeline
+
+The custom dataset test pipeline first applies
+`ResizeCropMultiViewImageToFixedSize(size=[1080, 1920], crop_mode=bottom)` and
+then `ImageAug3D(resize=0.40, final_dim=[256, 704])`. Vehicle cameras do not
+share one raw resolution (`front` is 3840x2160 while the other five views are
+1920x1280), so a single resize from each raw frame is not equivalent.
+
+Use:
+
+```yaml
+image_size: [256, 704]
+image_preprocess_size: [1080, 1920]
+image_resize: 0.40
+```
+
+The C++ adapter performs the two stages separately. The first-stage matrix is
+applied to `camera_intrinsics` and `lidar2image`; `img_aug_matrix` contains the
+second-stage resize/crop, matching the training data pipeline. The resulting
+raw-to-network pixel transforms are:
+
+- `front` 3840x2160: `u'=0.20u-32`, `v'=0.20v-176`
+- other views 1920x1280: `u'=0.40u-32`, `v'=0.40v-256`
+
+Changing only `image_resize` to `0.40` without setting
+`image_preprocess_size` does not fix the 3840x2160 front view and does not
+reproduce the bottom crop from 1920x1280 to 1920x1080.
+
+### Model coordinate frame
+
+For this custom dataset, `concated_pcl`, the 3D annotations, and the model
+reference frame are all `car_center`. NuScenes-compatible fields such as
+`lidar_path`, `sensor2lidar_*`, and `lidar2image` use `lidar` as a historical
+name for that model reference; they do not imply the physical top-center LiDAR
+sensor frame. Pass `/perception/lidar/preproc_points_cloud` to the model without
+an `ego2lidar` transform. The physical `lidar2ego` calibration is provenance
+only and must not be applied to points, predicted boxes, or camera projection.

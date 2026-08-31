@@ -105,8 +105,10 @@ static bevfusion::CoreParameter make_core_parameter(const AdapterConfig& cfg) {
   }
 
   bevfusion::camera::NormalizationParameter normalization;
-  normalization.image_width = is_bevfusion_df ? 1920 : 1600;
-  normalization.image_height = is_bevfusion_df ? 1080 : 900;
+  normalization.image_width = cfg.image_preprocess_width > 0 ? cfg.image_preprocess_width
+                                                             : (is_bevfusion_df ? 1920 : 1600);
+  normalization.image_height = cfg.image_preprocess_height > 0 ? cfg.image_preprocess_height
+                                                               : (is_bevfusion_df ? 1080 : 900);
   normalization.output_width = cfg.image_width;
   normalization.output_height = cfg.image_height;
   normalization.num_camera = static_cast<int>(cfg.camera_order.size());

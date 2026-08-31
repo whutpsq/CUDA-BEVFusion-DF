@@ -226,14 +226,18 @@ static Image undistort_image(const Image& src, const Calibration& calibration, s
 }
 #endif
 
-static Image resize_crop_image(const Image& src, const AdapterConfig& cfg, float* aug16) {
+static void set_identity4(float* matrix) {
+  std::fill(matrix, matrix + 16, 0.0f);
+  for (int i = 0; i < 4; ++i) matrix[i * 4 + i] = 1.0f;
+}
+
+static Image resize_then_crop(const Image& src, int resize_w, int resize_h, int crop_w, int crop_h,
+                              int final_w, int final_h) {
   if (src.rgb.empty() || src.width <= 0 || src.height <= 0) throw std::runtime_error("Invalid camera image");
-  const int final_h = cfg.image_height;
-  const int final_w = cfg.image_width;
-  const int resize_w = std::max(static_cast<int>(src.width * cfg.image_resize), final_w);
-  const int resize_h = std::max(static_cast<int>(src.height * cfg.image_resize), final_h);
-  const int crop_w = static_cast<int>(std::max(0, resize_w - final_w) / 2);
-  const int crop_h = static_cast<int>(std::max(0, resize_h - final_h));
+  if (resize_w < final_w || resize_h < final_h || crop_w < 0 || crop_h < 0 || crop_w + final_w > resize_w ||
+      crop_h + final_h > resize_h) {
+    throw std::runtime_error("Resize/crop geometry does not cover the requested output image");
+  }
 
   Image out;
   out.width = final_w;
@@ -265,8 +269,47 @@ static Image resize_crop_image(const Image& src, const AdapterConfig& cfg, float
     }
   }
 
-  std::fill(aug16, aug16 + 16, 0.0f);
-  for (int i = 0; i < 4; ++i) aug16[i * 4 + i] = 1.0f;
+  return out;
+}
+
+static Image resize_crop_image(const Image& src, const AdapterConfig& cfg, float* preprocess16, float* aug16) {
+  if (src.rgb.empty() || src.width <= 0 || src.height <= 0) throw std::runtime_error("Invalid camera image");
+
+  set_identity4(preprocess16);
+  Image standardized = src;
+  if (cfg.image_preprocess_height > 0 || cfg.image_preprocess_width > 0) {
+    if (cfg.image_preprocess_height <= 0 || cfg.image_preprocess_width <= 0) {
+      throw std::runtime_error("image_preprocess_size must contain positive height and width");
+    }
+    const float preprocess_scale = std::max(
+        static_cast<float>(cfg.image_preprocess_width) / static_cast<float>(src.width),
+        static_cast<float>(cfg.image_preprocess_height) / static_cast<float>(src.height));
+    const int resize_w = static_cast<int>(std::lround(static_cast<float>(src.width) * preprocess_scale));
+    const int resize_h = static_cast<int>(std::lround(static_cast<float>(src.height) * preprocess_scale));
+    const int crop_w = std::max(0, (resize_w - cfg.image_preprocess_width) / 2);
+    const int crop_h = std::max(0, resize_h - cfg.image_preprocess_height);
+    standardized = resize_then_crop(src, resize_w, resize_h, crop_w, crop_h, cfg.image_preprocess_width,
+                                    cfg.image_preprocess_height);
+    preprocess16[0] = preprocess_scale;
+    preprocess16[5] = preprocess_scale;
+    preprocess16[3] = -static_cast<float>(crop_w);
+    preprocess16[7] = -static_cast<float>(crop_h);
+  }
+
+  const int final_h = cfg.image_height;
+  const int final_w = cfg.image_width;
+  int resize_w = static_cast<int>(standardized.width * cfg.image_resize);
+  int resize_h = static_cast<int>(standardized.height * cfg.image_resize);
+  if (cfg.image_preprocess_height <= 0 && cfg.image_preprocess_width <= 0) {
+    // Preserve the legacy behavior when no training-time fixed-size stage is configured.
+    resize_w = std::max(resize_w, final_w);
+    resize_h = std::max(resize_h, final_h);
+  }
+  const int crop_w = static_cast<int>(std::max(0, resize_w - final_w) / 2);
+  const int crop_h = static_cast<int>(std::max(0, resize_h - final_h));
+  Image out = resize_then_crop(standardized, resize_w, resize_h, crop_w, crop_h, final_w, final_h);
+
+  set_identity4(aug16);
   aug16[0] = cfg.image_resize;
   aug16[5] = cfg.image_resize;
   aug16[3] = -static_cast<float>(crop_w);
@@ -350,11 +393,21 @@ ModelInput build_model_input(const SyncedFrame& frame, const AdapterConfig& cfg,
   input.image_height = cfg.image_height;
   input.image_width = cfg.image_width;
   const size_t image_plane = static_cast<size_t>(cfg.image_height * cfg.image_width);
+  const size_t expected_matrix_values = static_cast<size_t>(input.num_cameras) * 16;
+  if (calibration.camera2lidar.size() != expected_matrix_values ||
+      calibration.camera_intrinsics.size() != expected_matrix_values ||
+      calibration.lidar2image.size() != expected_matrix_values) {
+    throw std::runtime_error("Calibration matrix count does not match the synchronized camera count");
+  }
   input.images_chw.resize(static_cast<size_t>(input.num_cameras) * 3 * image_plane);
   input.img_aug_matrix.resize(static_cast<size_t>(input.num_cameras) * 16);
+  input.camera2lidar = calibration.camera2lidar;
+  input.camera_intrinsics.resize(calibration.camera_intrinsics.size());
+  input.lidar2image.resize(calibration.lidar2image.size());
 
   for (int cam = 0; cam < input.num_cameras; ++cam) {
     float* aug = input.img_aug_matrix.data() + static_cast<size_t>(cam) * 16;
+    float preprocess_array[16];
 #ifdef RSCL_HAVE_OPENCV_UNDISTORT
     Image rectified;
     const Image* source = &frame.cameras[cam];
@@ -362,10 +415,24 @@ ModelInput build_model_input(const SyncedFrame& frame, const AdapterConfig& cfg,
       rectified = undistort_image(frame.cameras[cam], calibration, static_cast<size_t>(cam));
       source = &rectified;
     }
-    Image resized = resize_crop_image(*source, cfg, aug);
+    Image resized = resize_crop_image(*source, cfg, preprocess_array, aug);
 #else
-    Image resized = resize_crop_image(frame.cameras[cam], cfg, aug);
+    Image resized = resize_crop_image(frame.cameras[cam], cfg, preprocess_array, aug);
 #endif
+    const std::vector<float> preprocess(preprocess_array, preprocess_array + 16);
+    const size_t matrix_offset = static_cast<size_t>(cam) * 16;
+    const std::vector<float> intrinsic(
+        calibration.camera_intrinsics.begin() + matrix_offset,
+        calibration.camera_intrinsics.begin() + matrix_offset + 16);
+    const std::vector<float> lidar2image(
+        calibration.lidar2image.begin() + matrix_offset,
+        calibration.lidar2image.begin() + matrix_offset + 16);
+    const std::vector<float> standardized_intrinsic = matmul4(preprocess, intrinsic);
+    const std::vector<float> standardized_lidar2image = matmul4(preprocess, lidar2image);
+    std::copy(standardized_intrinsic.begin(), standardized_intrinsic.end(),
+              input.camera_intrinsics.begin() + matrix_offset);
+    std::copy(standardized_lidar2image.begin(), standardized_lidar2image.end(),
+              input.lidar2image.begin() + matrix_offset);
     for (int y = 0; y < cfg.image_height; ++y) {
       for (int x = 0; x < cfg.image_width; ++x) {
         const unsigned char* px = &resized.rgb[(static_cast<size_t>(y) * cfg.image_width + x) * 3];
@@ -384,16 +451,14 @@ ModelInput build_model_input(const SyncedFrame& frame, const AdapterConfig& cfg,
   input.points.reserve(npoints * 5);
   for (size_t i = 0; i < npoints; ++i) {
     const float* p = frame.lidar.data() + i * in_dim;
-    if (p[0] <= cfg.point_cloud_range[0] || p[0] >= cfg.point_cloud_range[3] || p[1] <= cfg.point_cloud_range[1] ||
-        p[1] >= cfg.point_cloud_range[4] || p[2] <= cfg.point_cloud_range[2] || p[2] >= cfg.point_cloud_range[5]) {
+    if (p[0] <= cfg.point_cloud_range[0] || p[0] >= cfg.point_cloud_range[3] ||
+        p[1] <= cfg.point_cloud_range[1] || p[1] >= cfg.point_cloud_range[4] ||
+        p[2] <= cfg.point_cloud_range[2] || p[2] >= cfg.point_cloud_range[5]) {
       continue;
     }
     for (int c = 0; c < 5; ++c) input.points.push_back(c < in_dim ? p[c] : 0.0f);
   }
 
-  input.camera2lidar = calibration.camera2lidar;
-  input.camera_intrinsics = calibration.camera_intrinsics;
-  input.lidar2image = calibration.lidar2image;
   return input;
 }
 

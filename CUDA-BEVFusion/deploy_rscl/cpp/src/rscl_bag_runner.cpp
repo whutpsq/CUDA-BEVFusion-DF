@@ -12,6 +12,9 @@
 #include <string>
 #include <vector>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
 #if defined(_WIN32)
 #include <direct.h>
 #else
@@ -23,6 +26,7 @@
 #include "rscl_adapter/codecs.hpp"
 #include "rscl_adapter/config.hpp"
 #include "rscl_adapter/pipeline.hpp"
+#include "rscl_adapter/sync.hpp"
 
 namespace {
 
@@ -30,6 +34,7 @@ struct Args {
   std::string adapter_config = "deploy_rscl/configs/bevfusion_rscl.yaml";
   std::string bag;
   std::string output_file;
+  std::string export_frames_dir;
   std::string dump_camera_debug_dir;
   int max_frames = -1;
   int dump_camera_debug_count = 0;
@@ -67,6 +72,8 @@ static Args parse_args(int argc, char** argv) {
       args.bag = argv[++i];
     } else if (arg_eq(argv[i], "--output-file") && i + 1 < argc) {
       args.output_file = argv[++i];
+    } else if (arg_eq(argv[i], "--export-frames-dir") && i + 1 < argc) {
+      args.export_frames_dir = argv[++i];
     } else if (arg_eq(argv[i], "--max-frames") && i + 1 < argc) {
       args.max_frames = std::atoi(argv[++i]);
     } else if (arg_eq(argv[i], "--dump-camera-debug-dir") && i + 1 < argc) {
@@ -97,6 +104,7 @@ static Args parse_args(int argc, char** argv) {
           << "Options:\n"
           << "  --max-frames N          Stop after N synchronized frames\n"
           << "  --output-file PATH      Write JSONL detections instead of stdout\n"
+          << "  --export-frames-dir DIR Export synchronized decoded cameras and lidar without inference\n"
           << "  --dump-camera-debug-dir DIR    Dump camera JSON/raw/payload samples for debugging\n"
           << "  --dump-camera-debug-count N    Number of camera samples to dump, default 0\n"
           << "  --sync-tolerance-ms N   Override camera/lidar sync tolerance in milliseconds\n"
@@ -149,6 +157,52 @@ static void write_text_file(const std::string& path, const std::string& text) {
   std::ofstream out(path.c_str(), std::ios::out | std::ios::trunc);
   if (!out) throw std::runtime_error("Failed to open debug file: " + path);
   out << text;
+}
+
+static void write_float_file(const std::string& path, const std::vector<float>& data) {
+  std::ofstream out(path.c_str(), std::ios::out | std::ios::binary | std::ios::trunc);
+  if (!out) throw std::runtime_error("Failed to open frame export file: " + path);
+  if (!data.empty()) {
+    out.write(reinterpret_cast<const char*>(data.data()),
+              static_cast<std::streamsize>(data.size() * sizeof(float)));
+  }
+}
+
+static void export_synced_frame(const std::string& root, const rscl_adapter::AdapterConfig& cfg,
+                                const rscl_adapter::SyncedFrame& frame, int index) {
+  ensure_dir(root);
+  char dirname[128];
+  std::snprintf(dirname, sizeof(dirname), "frame_%06d_%lld", index,
+                static_cast<long long>(frame.timestamp_us));
+  const std::string frame_dir = root + "/" + dirname;
+  ensure_dir(frame_dir);
+
+  if (frame.cameras.size() != cfg.camera_order.size()) {
+    throw std::runtime_error("Export frame camera count does not match camera_order");
+  }
+
+  std::ostringstream manifest;
+  manifest << "{\"timestamp_us\":" << frame.timestamp_us
+           << ",\"lidar_file\":\"lidar.bin\",\"lidar_point_dim\":" << frame.lidar_point_dim
+           << ",\"cameras\":[";
+  for (size_t i = 0; i < frame.cameras.size(); ++i) {
+    const rscl_adapter::Image& image = frame.cameras[i];
+    if (image.width <= 0 || image.height <= 0 || image.channels != 3 || image.rgb.empty()) {
+      throw std::runtime_error("Decoded camera image is empty or is not RGB");
+    }
+    const std::string filename = sanitize_filename(cfg.camera_order[i]) + ".jpg";
+    const std::string path = frame_dir + "/" + filename;
+    if (!stbi_write_jpg(path.c_str(), image.width, image.height, image.channels, image.rgb.data(), 92)) {
+      throw std::runtime_error("Failed to write camera JPEG: " + path);
+    }
+    if (i) manifest << ',';
+    manifest << "{\"name\":\"" << cfg.camera_order[i] << "\",\"file\":\"" << filename
+             << "\",\"width\":" << image.width << ",\"height\":" << image.height << '}';
+  }
+  manifest << "]}";
+
+  write_float_file(frame_dir + "/lidar.bin", frame.lidar);
+  write_text_file(frame_dir + "/frame.json", manifest.str());
 }
 
 static std::string hex_head(const std::vector<unsigned char>& data, size_t max_bytes) {
@@ -241,8 +295,22 @@ int main(int argc, char** argv) {
     std::unique_ptr<rscl_adapter::BagReader> reader = rscl_adapter::create_rscl_bag_reader(cfg.bag_path, included_topics);
     if (!reader || !reader->is_valid()) throw std::runtime_error("Invalid rsclbag: " + cfg.bag_path);
 
-    const bool dry_run = args.decode_only || args.decode_images_only;
-    rscl_adapter::BevFusionPipeline pipeline(cfg, dry_run);
+    const bool export_mode = !args.export_frames_dir.empty();
+    if (export_mode && args.decode_only) {
+      throw std::runtime_error("--export-frames-dir requires image/lidar decoding; do not combine it with --decode-only");
+    }
+    const bool dry_run = args.decode_only || args.decode_images_only || export_mode;
+    std::unique_ptr<rscl_adapter::BevFusionPipeline> pipeline;
+    std::unique_ptr<rscl_adapter::FrameSynchronizer> export_sync;
+    if (export_mode) {
+      export_sync.reset(new rscl_adapter::FrameSynchronizer(
+          cfg.camera_topics, cfg.camera_order, cfg.lidar_topic, cfg.sync_tolerance_ms,
+          static_cast<size_t>(cfg.sync_queue_size), cfg.sync_debug, cfg.sync_debug_limit,
+          cfg.camera_time_offsets_ms, cfg.lidar_time_offset_ms));
+      ensure_dir(args.export_frames_dir);
+    } else {
+      pipeline.reset(new rscl_adapter::BevFusionPipeline(cfg, dry_run));
+    }
     std::map<std::string, std::unique_ptr<rscl_adapter::StatefulCameraDecoder> > camera_decoders;
     for (size_t i = 0; i < cfg.camera_topics.size(); ++i) {
       camera_decoders[cfg.camera_topics[i]].reset(new rscl_adapter::StatefulCameraDecoder());
@@ -262,6 +330,7 @@ int main(int argc, char** argv) {
       try {
         std::string output_json;
         bool synced = false;
+        rscl_adapter::SyncedFrame exported_frame;
         if (contains_topic(cfg.camera_topics, msg.topic)) {
           if (!args.dump_camera_debug_dir.empty() && camera_debug_dumps < args.dump_camera_debug_count) {
             ++camera_debug_dumps;
@@ -276,7 +345,11 @@ int main(int argc, char** argv) {
           } else {
             camera = decode_camera_message(camera_decoders[msg.topic].get(), msg);
           }
-          synced = pipeline.add_camera(camera, &output_json);
+          if (export_mode) {
+            synced = export_sync->add_camera(camera, &exported_frame);
+          } else {
+            synced = pipeline->add_camera(camera, &output_json);
+          }
         } else if (msg.topic == cfg.lidar_topic) {
           rscl_adapter::LidarPacket lidar;
           if (args.decode_only) {
@@ -288,12 +361,24 @@ int main(int argc, char** argv) {
           } else {
             lidar = decode_lidar_message(msg, cfg.point_dim);
           }
-          synced = pipeline.add_lidar(lidar, &output_json);
+          if (export_mode) {
+            synced = export_sync->add_lidar(lidar, &exported_frame);
+          } else {
+            synced = pipeline->add_lidar(lidar, &output_json);
+          }
         }
 
         if (!synced) continue;
         ++frames;
-        if (dry_run) {
+        if (export_mode) {
+          export_synced_frame(args.export_frames_dir, cfg, exported_frame, frames - 1);
+          std::cout << "exported_frames=" << frames << " timestamp_us=" << exported_frame.timestamp_us
+                    << " lidar_points="
+                    << (exported_frame.lidar_point_dim > 0
+                            ? exported_frame.lidar.size() / static_cast<size_t>(exported_frame.lidar_point_dim)
+                            : 0)
+                    << " decode_errors=" << decode_errors << std::endl;
+        } else if (dry_run) {
           std::cout << "synced_frames=" << frames << " timestamp_us=" << msg.timestamp_us
                     << " decode_errors=" << decode_errors << std::endl;
         } else if (!output_json.empty()) {
