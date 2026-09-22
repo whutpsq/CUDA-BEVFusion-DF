@@ -1,0 +1,9 @@
+<launch>
+  <arg name="config" />
+  <arg name="classes" />
+  <node pkg="yangluo_bevfusion" type="yangluo_bevfusion_decode_only_node"
+        name="yangluo_bevfusion_decode_only" output="screen">
+    <param name="config" value="$(arg config)" />
+    <param name="classes" value="$(arg classes)" />
+  </node>
+</launch>

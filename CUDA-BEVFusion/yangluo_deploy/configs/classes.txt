@@ -1,0 +1,11 @@
+truck
+car
+traffic_cone
+crane_tyre
+quay_crane
+agv
+crane_spreader
+tricyclist
+fence
+forklift
+pedestrian

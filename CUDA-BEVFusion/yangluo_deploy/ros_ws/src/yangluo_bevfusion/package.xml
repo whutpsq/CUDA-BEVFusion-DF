@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>yangluo_bevfusion</name>
+  <version>0.1.0</version>
+  <description>Two-camera ROS1 BEVFusion node for the Yangluo port truck.</description>
+  <maintainer email="maintainer@example.com">Yangluo BEVFusion Maintainer</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <depend>rosbag</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>yangluo_bevfusion_msgs</depend>
+</package>
