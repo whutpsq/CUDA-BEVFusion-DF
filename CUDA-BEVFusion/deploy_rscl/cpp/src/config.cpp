@@ -138,6 +138,7 @@ AdapterConfig load_adapter_config(const std::string& path) {
   set_float_vector_fixed(root, "image_std", cfg.image_std, 3);
   set_bool(root, "undistort_images", &cfg.undistort_images);
   set_int(root, "point_dim", &cfg.point_dim);
+  set_string(root, "input_point_coordinate_frame", &cfg.input_point_coordinate_frame);
   set_float_vector_fixed(root, "point_cloud_range", cfg.point_cloud_range, 6);
   set_string(root, "calibration_file", &cfg.calibration_file);
   set_string(root, "calibration_extrinsic_direction", &cfg.calibration_extrinsic_direction);
@@ -163,6 +164,12 @@ AdapterConfig load_adapter_config(const std::string& path) {
   cfg.calibration_file = resolve_path(cfg.calibration_file, base);
   cfg.bag_path = resolve_path(cfg.bag_path, base);
   cfg.output_file = resolve_path(cfg.output_file, base);
+  if (cfg.input_point_coordinate_frame != "FLU" &&
+      cfg.input_point_coordinate_frame != "RFU") {
+    throw std::runtime_error(
+        "input_point_coordinate_frame must be FLU or RFU, got: " +
+        cfg.input_point_coordinate_frame);
+  }
   return cfg;
 }
 

@@ -43,6 +43,8 @@ fi
 mkdir -p "$shadow_root/src" "$shadow_root/deploy_rscl" "$generated_root"
 cp -a "$repo_root/src/." "$shadow_root/src/"
 cp -a "$repo_root/deploy_rscl/." "$shadow_root/deploy_rscl/"
+mkdir -p "$shadow_root/yangluo_deploy"
+cp -a "$repo_root/yangluo_deploy/cpp" "$shadow_root/yangluo_deploy/"
 cp -a "$repo_root/CMakeLists.txt" "$shadow_root/CMakeLists.txt"
 ln -sfn "$repo_root/../dependencies" "$generated_root/dependencies"
 ln -sfn "$repo_root/../libraries" "$generated_root/libraries"
@@ -75,13 +77,8 @@ cmake -S "$shadow_root" -B "$core_build" \
   -DBUILD_RSCL_BAG_RUNNER=OFF \
   -DBUILD_RSCL_ONLINE_NODE=OFF \
   -DRSCL_ENABLE_FFMPEG_DECODER=OFF \
-  -DRSCL_ENABLE_OPENCV_UNDISTORT=ON \
-  -DRSCL_OPENCV_ROOT="$ros_prefix" \
-  -DRSCL_OPENCV_INCLUDE_DIR="$ros_prefix/include/opencv4" \
-  -DRSCL_OPENCV_LIBRARY_DIR="$ros_prefix/lib" \
-  -DRSCL_OPENCV_CORE_LIBRARY="$ros_prefix/lib/libopencv_core.so" \
-  -DRSCL_OPENCV_IMGPROC_LIBRARY="$ros_prefix/lib/libopencv_imgproc.so" \
-  -DRSCL_OPENCV_CALIB3D_LIBRARY="$ros_prefix/lib/libopencv_calib3d.so" \
+  -DRSCL_ENABLE_OPENCV_UNDISTORT=OFF \
+  -DRSCL_ENABLE_NATIVE_UNDISTORT=ON \
   -DBEVFUSION_TARGET_ARCH=aarch64 \
   -DBEVFUSION_SPCONV_ARCH=aarch64 \
   -DBEVFUSION_SPCONV_ROOT="$spconv_root" \
@@ -103,8 +100,7 @@ catkin_make -C "$ros_ws" -j"$build_jobs" -l"$build_jobs" \
   -DTENSORRT_ROOT="$trt_root" \
   -DCUDA_ROOT="$cuda_root" \
   -DCUDA_DRIVER_LIBRARY="$cuda_driver_stub" \
-  -DCUBLASLT_LIBRARY="$cuda_cublaslt_stub" \
-  -DROS_OPENCV_ROOT="$ros_prefix"
+  -DCUBLASLT_LIBRARY="$cuda_cublaslt_stub"
 
 file "$core_build/libbevfusion_core.so" "$core_build/libcustom_layernorm.so" \
   "$ros_ws/devel/lib/yangluo_bevfusion/yangluo_bevfusion_node"

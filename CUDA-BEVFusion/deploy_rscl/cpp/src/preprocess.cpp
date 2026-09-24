@@ -12,6 +12,8 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#elif defined(RSCL_HAVE_NATIVE_UNDISTORT)
+#include "native_undistort.hpp"
 #endif
 
 #include "rscl_adapter/json.hpp"
@@ -30,7 +32,7 @@ struct UndistortCache {
   std::mutex mutex;
   std::vector<Entry> entries;
 };
-#else
+#elif !defined(RSCL_HAVE_NATIVE_UNDISTORT)
 struct UndistortCache {};
 #endif
 
@@ -381,9 +383,11 @@ Calibration load_calibration(const std::string& path, const std::vector<std::str
 }
 
 ModelInput build_model_input(const SyncedFrame& frame, const AdapterConfig& cfg, const Calibration& calibration) {
-#ifndef RSCL_HAVE_OPENCV_UNDISTORT
+#if !defined(RSCL_HAVE_OPENCV_UNDISTORT) && !defined(RSCL_HAVE_NATIVE_UNDISTORT)
   if (cfg.undistort_images) {
-    throw std::runtime_error("undistort_images=true requires a build with RSCL_ENABLE_OPENCV_UNDISTORT=ON");
+    throw std::runtime_error(
+        "undistort_images=true requires RSCL_ENABLE_OPENCV_UNDISTORT=ON or "
+        "RSCL_ENABLE_NATIVE_UNDISTORT=ON");
   }
 #endif
   if (frame.cameras.size() != cfg.camera_order.size()) throw std::runtime_error("Synced frame camera count mismatch");
@@ -408,11 +412,15 @@ ModelInput build_model_input(const SyncedFrame& frame, const AdapterConfig& cfg,
   for (int cam = 0; cam < input.num_cameras; ++cam) {
     float* aug = input.img_aug_matrix.data() + static_cast<size_t>(cam) * 16;
     float preprocess_array[16];
-#ifdef RSCL_HAVE_OPENCV_UNDISTORT
+#if defined(RSCL_HAVE_OPENCV_UNDISTORT) || defined(RSCL_HAVE_NATIVE_UNDISTORT)
     Image rectified;
     const Image* source = &frame.cameras[cam];
     if (cfg.undistort_images) {
+#ifdef RSCL_HAVE_OPENCV_UNDISTORT
       rectified = undistort_image(frame.cameras[cam], calibration, static_cast<size_t>(cam));
+#else
+      rectified = undistort_image_native(frame.cameras[cam], calibration, static_cast<size_t>(cam));
+#endif
       source = &rectified;
     }
     Image resized = resize_crop_image(*source, cfg, preprocess_array, aug);
@@ -451,12 +459,21 @@ ModelInput build_model_input(const SyncedFrame& frame, const AdapterConfig& cfg,
   input.points.reserve(npoints * 5);
   for (size_t i = 0; i < npoints; ++i) {
     const float* p = frame.lidar.data() + i * in_dim;
-    if (p[0] <= cfg.point_cloud_range[0] || p[0] >= cfg.point_cloud_range[3] ||
-        p[1] <= cfg.point_cloud_range[1] || p[1] >= cfg.point_cloud_range[4] ||
+    float model_x = p[0];
+    float model_y = p[1];
+    if (cfg.input_point_coordinate_frame == "RFU") {
+      // RFU (right, front, up) -> FLU (front, left, up).
+      model_x = p[1];
+      model_y = -p[0];
+    }
+    if (model_x <= cfg.point_cloud_range[0] || model_x >= cfg.point_cloud_range[3] ||
+        model_y <= cfg.point_cloud_range[1] || model_y >= cfg.point_cloud_range[4] ||
         p[2] <= cfg.point_cloud_range[2] || p[2] >= cfg.point_cloud_range[5]) {
       continue;
     }
-    for (int c = 0; c < 5; ++c) input.points.push_back(c < in_dim ? p[c] : 0.0f);
+    input.points.push_back(model_x);
+    input.points.push_back(model_y);
+    for (int c = 2; c < 5; ++c) input.points.push_back(c < in_dim ? p[c] : 0.0f);
   }
 
   return input;

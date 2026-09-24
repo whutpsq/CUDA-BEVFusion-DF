@@ -3,6 +3,7 @@
 不要修改或替换 `tools/visualize.py`。该文件继续服务乘用车数据。
 
 港口数据使用数据集级 `config/camera_calibration.json`，请通过独立入口运行：
+当前实车物理对应关系为 `cam5 -> 标定 0`、`cam10 -> 标定 10`；独立入口会按此关系读取参数。
 
 ```bash
 cd /home/psq/bevfusion
@@ -26,4 +27,3 @@ torchpack dist-run -np 1 python \
 
 首次读取每个相机时应看到 `YANGLUO_VIS_CALIBRATION_OK`。输出目录包括
 `camera-0/`、`camera-1/` 和 `lidar/`。
-

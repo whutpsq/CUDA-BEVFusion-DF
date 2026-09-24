@@ -18,10 +18,14 @@ deployment procedure, see `RESNET50_TRAIN_EXPORT_RUNBOOK_CN.md`.
   was zero; it is deliberately not populated with the per-point timestamp.
 - Output: `/perception/bevfusion/objects`,
   `yangluo_bevfusion_msgs/DetectedObjectArray`, frame `base_link`.
-- Camera order: front then rear.  Runtime camera IDs are 0 and 5; the training
-  source used IDs 5 and 10.
-- Images are rectified with the rational eight-coefficient distortion model,
-  standardized to 1920x1080, then resized/cropped to 704x256.
+- Camera order: front then rear.  The verified live topics are `cam5` and
+  `cam10`, and their current calibration entries are respectively 0 and 10.
+- The live PointCloud2 payload is RFU despite its `base_link` frame ID.  The
+  vehicle YAML selects RFU input and converts it to the model's FLU frame.
+- Images are rectified with the supplied OpenCV 4/5/8-coefficient distortion
+  model. The converter pads 4/5 coefficients to the C++ runtime's 8-value
+  representation, then images are standardized to 1920x1080 and resized/cropped
+  to 704x256.
 - Initial synchronization tolerance: 50 ms.
 
 ## Validation boundary
@@ -33,9 +37,10 @@ build or ELF check is not a Thor runtime result.
 
 ## Directory layout
 
-- `training/`: create an isolated ResNet50 training config without changing
-  `H:/df_code/bevfusion/yangluo_adapter`.  Full-model warm-start conversion is
-  optional and is not used by the default Yangluo ResNet50 training path.
+- `training/`: corrected local adapter snapshot plus an isolated ResNet50
+  config generator.  The original `H:/df_code/bevfusion/yangluo_adapter`
+  remains unchanged.  Full-model warm-start conversion is optional and is not
+  used by the default Yangluo ResNet50 training path.
 - `export/`: export the two-camera FP16 ONNX components on the x86 GPU server.
 - `tools/`: calibration conversion, bag-contract validation, and preflight.
 - `configs/`: ROS/runtime configuration and class names.
@@ -71,7 +76,7 @@ active:
 
 ```bash
 python yangluo_deploy/training/make_resnet50_config.py \
-  --input /path/to/bevfusion/yangluo_adapter/demo_overfit.yaml \
+  --input yangluo_deploy/training/adapter_snapshot/demo_overfit.yaml \
   --output yangluo_deploy/generated/demo_overfit_resnet50.yaml \
   --pretrained /path/to/bevfusion/pretrained/resnet50-0676ba61.pth
 ```
@@ -138,22 +143,30 @@ fuser.onnx
 head.bbox.onnx
 ```
 
-## 4. Generate runtime calibration
+## 4. Calibration and compatibility boundary
+
+The projection investigation established the current physical association as
+`/cam5/compressed -> calibration 0` and
+`/cam10/compressed -> calibration 10`.  The checked-in training adapter
+snapshot uses this mapping.  Generate the calibration for the replacement
+model with:
 
 ```bash
 python yangluo_deploy/tools/convert_calibration.py \
   --input yangluogang/camera_calibration.json \
-  --output yangluo_deploy/configs/calibration_runtime.json \
-  --front-id 0 --rear-id 5
+  --output yangluo_deploy/configs/calibration_vehicle_0_10.json \
+  --front-id 0 --rear-id 10
 ```
 
 The converter applies the same FLU-to-RFU basis change used by the training
-adapter.  Since the bag point cloud already has `frame_id=base_link`,
-`lidar2ego` remains identity.
+adapter.  Coordinate semantics are determined from payload values and visual
+closure, not from the ROS `frame_id` alone.
 
-The converted 0/5 calibration is already checked in as
-`configs/calibration_runtime.json`; the command above is the reproducible
-regeneration step.
+The vehicle YAML files select `calibration_vehicle_0_10.json`. A checkpoint
+trained with the previous camera mapping remains useful only for deployment
+plumbing tests; retrain and re-export before treating detections as production
+results. The 48 ms camera timestamp offset remains a measured synchronization
+setting, independent of this spatial-calibration correction.
 
 ## 5. Build and run boundaries
 
@@ -169,6 +182,11 @@ cmake -S yangluo_deploy/tensorrt -B build_yangluo_trt_builder
 cmake --build build_yangluo_trt_builder -j$(nproc)
 ```
 
+The Builder CMake project accepts both `TENSORRT_ROOT` and `CUDA_ROOT`.  The
+development container uses `-DTENSORRT_ROOT=/opt/vehicle101`; the real Thor
+SDK installs the same TensorRT 10.13 headers and libraries below `/usr`, so
+configure it with `-DTENSORRT_ROOT=/usr -DCUDA_ROOT=/usr/local/cuda`.
+
 After copying the ONNX directory and build products to the real Thor:
 
 ```bash
@@ -182,6 +200,12 @@ This generates and immediately deserializes each plan on Thor.  The success
 marker is `FP16_ENGINE_SET_OK`.  The LiDAR sparse backbone remains
 `lidar.backbone.xyz.onnx` and is executed by the matching target
 `libspconv.so`.
+
+The isolated builder also fixes every dense engine input and output to linear
+FP16.  TensorRT's `kFP16` builder flag only selects FP16 tactics and otherwise
+preserves the FP32 boundary types exported by PyTorch; that would conflict
+with CUDA-BEVFusion's `nvtype::half` buffers.  Each deserialized engine prints
+and validates its `ENGINE_IO` contract before it is accepted.
 
 The final Thor bundle is relocatable and does not require `/workspace`.
 After extracting it, use the wrappers below; they derive every project path
@@ -198,3 +222,35 @@ directly so that a catkin workspace built under `/workspace` can be moved to a
 different absolute directory on the real Thor.  Runtime libraries are found
 through paths relative to the extracted bundle, while ROS, CUDA and TensorRT
 SDK prefixes retain their vehicle-provided locations.
+
+For the interim port-truck online path, use the dedicated wrapper.  It fixes
+the vehicle ROS master, `cam5/cam10` topics, legacy-model calibration and
+measured 48 ms camera offsets without changing the generic or bag-test
+entrypoints:
+
+```bash
+bash CUDA-BEVFusion/yangluo_deploy/tools/run_vehicle_fp16.sh --check-only
+bash CUDA-BEVFusion/yangluo_deploy/tools/run_vehicle_fp16.sh
+```
+
+Override the vehicle network only when required:
+
+```bash
+YANGLUO_VEHICLE_ROS_MASTER_URI=http://vehicle-master:11311 \
+YANGLUO_VEHICLE_ROS_IP=192.168.10.101 \
+bash CUDA-BEVFusion/yangluo_deploy/tools/run_vehicle_fp16.sh
+```
+
+The Yangluo ARM64 build uses the isolated OpenCV-free rectifier in
+`yangluo_deploy/cpp/`.  It implements the same 8-coefficient rational pinhole,
+`CV_16SC2`, linear interpolation, and constant-border contract used during
+training.  The passenger-car OpenCV backend remains the default and is not
+replaced.  Validate the numerical contract in an environment with Python
+OpenCV before packaging a new target binary:
+
+```bash
+python yangluo_deploy/tools/validate_native_undistort.py \
+  --calibration yangluo_deploy/configs/calibration_runtime.json
+```
+
+The success marker is `NATIVE_UNDISTORT_MATCHES_OPENCV`.

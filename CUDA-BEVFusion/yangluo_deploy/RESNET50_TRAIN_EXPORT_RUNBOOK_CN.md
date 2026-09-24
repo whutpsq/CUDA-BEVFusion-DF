@@ -20,7 +20,10 @@ sudo docker exec -it -w /home/psq/bevfusion bevfusion_train bash
 ## 2. 固定的数据和模型合同
 
 - 前视、后视共两路相机；训练配置中的相机顺序必须与部署顺序一致。
-- 部署 topic 为相机 0（前视）和相机 5（后视）。
+- 实车图像 topic 为 `/cam5/compressed`（前视）和
+  `/cam10/compressed`（后视）；当前标定文件中分别对应相机 0 和 10。
+- 原始点云和 3D 标注为 RFU，训练转换为 FLU；实车 PointCloud2 的数值同样为
+  RFU，部署预处理必须先执行 RFU→FLU，不能根据 `frame_id=base_link` 假定无需转换。
 - 网络输入图像为 `256x704`。
 - 点特征为 `[x, y, z, intensity, 0]`，第五维不是点时间戳。
 - 当前模型为 11 类，顺序如下：
@@ -71,7 +74,7 @@ sha256sum pretrained/resnet50-0676ba61.pth
 cd /home/psq/bevfusion
 
 python yangluo_deploy/training/make_resnet50_config.py \
-  --input yangluo_adapter/demo_overfit.yaml \
+  --input yangluo_deploy/training/adapter_snapshot/demo_overfit.yaml \
   --output yangluo_deploy/generated/demo_overfit_resnet50.yaml \
   --pretrained /home/psq/bevfusion/pretrained/resnet50-0676ba61.pth
 ```
@@ -96,6 +99,11 @@ in_channels: [512, 1024, 2048]
 
 `load_from` 和 `resume_from` 均为 `null`，表示除 ResNet50 ImageNet 初始化外，BEVFusion
 其余部分从头训练。
+
+本地已保存独立训练适配器快照
+`yangluo_deploy/training/adapter_snapshot/`。其中 `convert_yangluo.py` 固定使用
+`cam5→标定0、cam10→标定10`。此前按其他标定映射训练的检查点仅用于验证部署链路，
+不能作为完成空间标定修正后的最终模型；应使用该快照重新生成数据并重新训练、导出。
 
 ## 5. 训练前检查
 
@@ -282,13 +290,14 @@ torchpack dist-run -np 1 python \
 
 ## 10. 标定和 ARM64 部署
 
-运行时标定由原始相机 0/5 参数生成：
+实车运行时标定按 `/cam5/compressed -> 标定 0`、
+`/cam10/compressed -> 标定 10` 生成：
 
 ```bash
 python yangluo_deploy/tools/convert_calibration.py \
   --input yangluogang/camera_calibration.json \
-  --output yangluo_deploy/configs/calibration_runtime.json \
-  --front-id 0 --rear-id 5
+  --output yangluo_deploy/configs/calibration_vehicle_0_10.json \
+  --front-id 0 --rear-id 10
 ```
 
 比较两份 JSON 时应解析后比较内容，不要用 `cmp` 比较缩进和换行。
@@ -325,14 +334,16 @@ rostopic hz /perception/bevfusion/objects
 
 ## 11. 后续新数据/新类别的最短重复流程
 
-1. 更新数据 PKL 和训练配置中的类别列表；
-2. 重新运行 `make_resnet50_config.py`；
-3. 使用新的 `--run-dir` 训练，不加载旧 Swin checkpoint；
-4. 使用新的 checkpoint 和新的 ONNX 输出目录重新导出；
-5. 校验配置、checkpoint、ONNX head 和 `classes.txt` 的类别数量/顺序；
-6. 生成新模型包，不覆盖当前可回滚版本；
-7. 在真实 Thor 上重新生成 TensorRT Plan；Plan 不能跨模型或 TensorRT/GPU 环境复用；
-8. 先运行 `--check-only`，再启动 ROS，并用 bag/实车检查输出 topic。
+1. 使用 `training/adapter_snapshot/convert_yangluo.py` 重新生成采用正确 0/5
+   相机标定映射和 RFU→FLU 坐标转换的数据 PKL；
+2. 更新训练配置中的类别列表；
+3. 重新运行 `make_resnet50_config.py`；
+4. 使用新的 `--run-dir` 训练，不加载旧 Swin checkpoint；
+5. 使用新的 checkpoint 和新的 ONNX 输出目录重新导出；
+6. 校验配置、checkpoint、ONNX head 和 `classes.txt` 的类别数量/顺序；
+7. 生成新模型包，不覆盖当前可回滚版本；
+8. 在真实 Thor 上重新生成 TensorRT Plan；Plan 不能跨模型或 TensorRT/GPU 环境复用；
+9. 先运行 `--check-only`，再启动 ROS，并用 bag/实车检查输出 topic 和投影闭环。
 
 ## 12. 常见错误
 

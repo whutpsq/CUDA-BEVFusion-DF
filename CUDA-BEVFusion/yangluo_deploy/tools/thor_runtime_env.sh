@@ -29,8 +29,11 @@ export LD_LIBRARY_PATH="$YANGLUO_ROS_WS/devel/lib:$YANGLUO_CORE_DIR:$YANGLUO_SPC
 export CMAKE_PREFIX_PATH="$YANGLUO_ROS_WS/devel:$YANGLUO_ROS_PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 export ROS_PACKAGE_PATH="$YANGLUO_ROS_WS/src${ROS_PACKAGE_PATH:+:$ROS_PACKAGE_PATH}"
 
-python_site="$YANGLUO_ROS_WS/devel/lib/python3/dist-packages"
-if [ -d "$python_site" ]; then
-  export PYTHONPATH="$python_site${PYTHONPATH:+:$PYTHONPATH}"
-fi
-
+for python_site in \
+  "$YANGLUO_ROS_WS/devel/lib/python3/dist-packages" \
+  "$YANGLUO_ROS_WS/devel/lib/python3.8/site-packages"
+do
+  if [ -d "$python_site" ]; then
+    export PYTHONPATH="$python_site${PYTHONPATH:+:$PYTHONPATH}"
+  fi
+done

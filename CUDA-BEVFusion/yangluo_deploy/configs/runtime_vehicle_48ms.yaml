@@ -1,0 +1,50 @@
+node_name: "yangluo_bevfusion"
+module_name: "yangluo_bevfusion"
+device: "cuda:0"
+model: "yangluo_resnet50_fp16"
+profile: "bevfusion_df"
+precision: "fp16"
+cuda_model_root: "../../model/yangluo_resnet50_fp16"
+print_model_info: false
+
+enable_object_detection: true
+enable_map_segmentation: false
+score_threshold: 0.20
+publish_empty_frame: true
+
+# Verified physical camera mapping for the current vehicle calibration:
+# cam5->calibration 0 and cam10->calibration 10.
+camera_topics:
+  - "/cam5/compressed"
+  - "/cam10/compressed"
+camera_order:
+  - "front"
+  - "rear"
+lidar_topic: "/perception/lidar/concated_points_cloud"
+output_topic: "/perception/bevfusion/objects"
+
+sync_tolerance_ms: 50.0
+sync_queue_size: 30
+sync_debug: true
+sync_debug_limit: 100
+# Live Thor measurements on 2026-09-23 showed both camera timestamps were
+# consistently 46-50 ms earlier than LiDAR. The synchronizer adds these values
+# to the camera timestamps before nearest-frame matching.
+camera_time_offsets_ms: [48.0, 48.0]
+lidar_time_offset_ms: 0.0
+
+image_preprocess_size: [1080, 1920]
+image_size: [256, 704]
+image_resize: 0.40
+image_mean: [0.485, 0.456, 0.406]
+image_std: [0.229, 0.224, 0.225]
+undistort_images: true
+
+point_dim: 5
+# Projection closure on Thor proved that the payload values are RFU.  The
+# ResNet50 model was trained after converting RFU points/boxes to FLU.
+input_point_coordinate_frame: "RFU"
+point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+calibration_file: "calibration_vehicle_0_10.json"
+calibration_extrinsic_direction: "lidar2camera"
+allow_identity_calibration: false

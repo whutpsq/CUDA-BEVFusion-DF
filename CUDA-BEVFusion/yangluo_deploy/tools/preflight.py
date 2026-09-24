@@ -30,11 +30,13 @@ def main():
     errors = []
     raw = load_json_comments(args.camera_calibration)
     cameras = {str(item["desc"]): item for item in raw["camera_params"]}
-    for camera_id in ("0", "5"):
+    for camera_id in ("0", "10"):
         if camera_id not in cameras:
             errors.append(f"missing camera calibration {camera_id}")
-        elif len(cameras[camera_id].get("distortion", [])) != 8:
-            errors.append(f"camera {camera_id} does not have 8 distortion coefficients")
+        elif len(cameras[camera_id].get("distortion", [])) not in (4, 5, 8):
+            errors.append(
+                f"camera {camera_id} does not have a supported 4/5/8 coefficient distortion model"
+            )
 
     classes = [line.strip() for line in Path(args.classes).read_text(encoding="utf-8").splitlines() if line.strip()]
     if not classes or len(classes) != len(set(classes)):
@@ -60,7 +62,7 @@ def main():
         for error in errors:
             print("-", error)
         return 1
-    print(f"PASS cameras=0,5 classes={len(classes)} coordinate_frame=base_link point_layout=xyzi0")
+    print(f"PASS cameras=0,10 classes={len(classes)} coordinate_frame=base_link point_layout=xyzi0")
     return 0
 
 

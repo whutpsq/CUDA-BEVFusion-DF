@@ -46,7 +46,11 @@ bool BevFusionPipeline::process_frame(const SyncedFrame& frame, std::string* out
   static std::atomic<bool> logged_first_inference(false);
   const bool log_first_inference = !logged_first_inference.exchange(true);
   if (log_first_inference) {
-    std::cout << "inference_stage=build_model_input_begin model_coordinate_frame=car_center" << std::endl;
+    std::cout << "inference_stage=build_model_input_begin model_coordinate_frame=car_center"
+              << " input_point_coordinate_frame=" << cfg_.input_point_coordinate_frame
+              << " point_transform="
+              << (cfg_.input_point_coordinate_frame == "RFU" ? "RFU_to_FLU" : "identity")
+              << std::endl;
   }
   ModelInput input = build_model_input(frame, cfg_, calibration_);
   if (log_first_inference) {

@@ -70,6 +70,7 @@ class RsclAdapterConfig:
     image_std: Sequence[float] = (0.229, 0.224, 0.225)
     undistort_images: bool = False
     point_dim: int = 5
+    input_point_coordinate_frame: str = "FLU"
     point_cloud_range: Sequence[float] = (-51.2, -51.2, -5.0, 51.2, 51.2, 3.0)
     calibration_file: str | None = None
     calibration_extrinsic_direction: str = "lidar2camera"
@@ -129,6 +130,9 @@ class RsclAdapterConfig:
             image_std=tuple(data.get("image_std", (0.229, 0.224, 0.225))),
             undistort_images=bool(data.get("undistort_images", False)),
             point_dim=int(data.get("point_dim", 5)),
+            input_point_coordinate_frame=str(
+                data.get("input_point_coordinate_frame", "FLU")
+            ),
             point_cloud_range=tuple(
                 data.get("point_cloud_range", (-51.2, -51.2, -5.0, 51.2, 51.2, 3.0))
             ),

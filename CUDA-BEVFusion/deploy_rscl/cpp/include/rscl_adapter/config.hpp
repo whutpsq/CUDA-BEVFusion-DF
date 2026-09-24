@@ -60,6 +60,10 @@ struct AdapterConfig {
   float image_std[3] = {0.229f, 0.224f, 0.225f};
   bool undistort_images = false;
   int point_dim = 5;
+  // Coordinate convention carried by the incoming point payload.  FLU keeps
+  // the legacy/passenger-car behavior.  RFU converts (right, front, up) to
+  // the model's (front, left, up) convention before range filtering.
+  std::string input_point_coordinate_frame = "FLU";
   float point_cloud_range[6] = {-51.2f, -51.2f, -5.0f, 51.2f, 51.2f, 3.0f};
   std::string calibration_file;
   std::string calibration_extrinsic_direction = "lidar2camera";

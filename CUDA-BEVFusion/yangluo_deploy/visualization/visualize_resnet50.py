@@ -82,13 +82,18 @@ def find_calibration(image_path):
     )
 
 
+CAMERA_CALIBRATION_MAP = {"cam5": "0", "cam10": "10"}
+
+
 def load_yangluo_raw_camera_model(image_path):
-    """Return raw K and 8-value D for cam5/cam10 Yangluo images."""
+    """Return raw K and OpenCV D for mapped cam5/cam10 Yangluo images."""
     image_path = Path(image_path).expanduser().resolve()
     camera_name = image_path.parent.name
     if not camera_name.startswith("cam"):
         raise ValueError(f"Cannot infer Yangluo camera name from {image_path}")
-    camera_desc = camera_name[len("cam") :]
+    if camera_name not in CAMERA_CALIBRATION_MAP:
+        raise ValueError(f"Unsupported Yangluo camera directory: {camera_name}")
+    camera_desc = CAMERA_CALIBRATION_MAP[camera_name]
 
     calibration_path = find_calibration(image_path)
     by_desc = load_calibration_file(str(calibration_path))
@@ -98,9 +103,9 @@ def load_yangluo_raw_camera_model(image_path):
     camera = by_desc[camera_desc]
     intrinsic = np.asarray(camera["intrinsics"], dtype=np.float64).reshape(3, 3)
     distortion = np.asarray(camera["distortion"], dtype=np.float64).reshape(-1)
-    if distortion.shape != (8,):
+    if distortion.size not in (4, 5, 8):
         raise ValueError(
-            f"camera {camera_name} must have 8 distortion values, got {distortion.shape}"
+            f"camera {camera_name} must have 4, 5, or 8 distortion values, got {distortion.shape}"
         )
 
     report_key = (str(calibration_path), camera_desc)
@@ -138,4 +143,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

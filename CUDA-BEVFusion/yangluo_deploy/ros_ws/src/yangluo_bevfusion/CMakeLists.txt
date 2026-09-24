@@ -17,7 +17,6 @@ set(BEVFUSION_SPCONV_LIBRARY "" CACHE FILEPATH "Target libspconv.so")
 set(BEVFUSION_PROTOBUF_LIBRARY "" CACHE FILEPATH "Target libprotobuf.so")
 set(TENSORRT_ROOT "/opt/vehicle101" CACHE PATH "TensorRT SDK root")
 set(CUDA_ROOT "/usr/local/cuda" CACHE PATH "CUDA toolkit root")
-set(ROS_OPENCV_ROOT "/ota/miniconda3/envs/ros" CACHE PATH "ROS OpenCV 4.5 prefix")
 set(CUDA_DRIVER_LIBRARY "${CUDA_ROOT}/targets/sbsa-linux/lib/stubs/libcuda.so" CACHE FILEPATH
     "CUDA driver stub used only for linking in the GPU-less build container")
 
@@ -33,9 +32,6 @@ find_library(NVINFER_LIBRARY nvinfer HINTS "${TENSORRT_ROOT}/lib/aarch64-linux-g
 find_library(NVINFER_PLUGIN_LIBRARY nvinfer_plugin HINTS "${TENSORRT_ROOT}/lib/aarch64-linux-gnu" NO_DEFAULT_PATH REQUIRED)
 find_library(CUDART_LIBRARY cudart HINTS "${CUDA_ROOT}/targets/sbsa-linux/lib" NO_DEFAULT_PATH REQUIRED)
 find_library(CUBLASLT_LIBRARY cublasLt HINTS "${CUDA_ROOT}/targets/sbsa-linux/lib" NO_DEFAULT_PATH REQUIRED)
-find_library(OPENCV_CORE_LIBRARY opencv_core HINTS "${ROS_OPENCV_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
-find_library(OPENCV_IMGPROC_LIBRARY opencv_imgproc HINTS "${ROS_OPENCV_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
-find_library(OPENCV_CALIB3D_LIBRARY opencv_calib3d HINTS "${ROS_OPENCV_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
 if(NOT EXISTS "${CUDA_DRIVER_LIBRARY}")
   message(FATAL_ERROR "CUDA driver stub not found: ${CUDA_DRIVER_LIBRARY}")
 endif()
@@ -63,15 +59,12 @@ target_link_libraries(yangluo_bevfusion_node
   ${CUDART_LIBRARY}
   ${CUBLASLT_LIBRARY}
   ${CUDA_DRIVER_LIBRARY}
-  ${OPENCV_CALIB3D_LIBRARY}
-  ${OPENCV_IMGPROC_LIBRARY}
-  ${OPENCV_CORE_LIBRARY}
   ${catkin_LIBRARIES}
   dl pthread
 )
 target_link_options(yangluo_bevfusion_node PRIVATE "-Wl,--allow-shlib-undefined")
 set_target_properties(yangluo_bevfusion_node PROPERTIES
-  BUILD_RPATH "${BEVFUSION_BUILD_DIR};${TENSORRT_ROOT}/lib/aarch64-linux-gnu;${CUDA_ROOT}/targets/sbsa-linux/lib;${ROS_OPENCV_ROOT}/lib"
+  BUILD_RPATH "${BEVFUSION_BUILD_DIR};${TENSORRT_ROOT}/lib/aarch64-linux-gnu;${CUDA_ROOT}/targets/sbsa-linux/lib"
 )
 
 # GPU-free/QEMU validation executable.  Compile only the real configuration,

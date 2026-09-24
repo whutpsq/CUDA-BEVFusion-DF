@@ -114,6 +114,16 @@ def _build_points(frame: SyncedFrame, cfg: RsclAdapterConfig) -> np.ndarray:
         points = points.reshape(-1, cfg.point_dim)
     elif points.ndim != 2:
         raise ValueError(f"Expected lidar points to be 1D or 2D, got shape {points.shape}")
+    if cfg.input_point_coordinate_frame == "RFU":
+        points = points.copy()
+        rfu_x = points[:, 0].copy()
+        points[:, 0] = points[:, 1]
+        points[:, 1] = -rfu_x
+    elif cfg.input_point_coordinate_frame != "FLU":
+        raise ValueError(
+            "input_point_coordinate_frame must be FLU or RFU, got "
+            f"{cfg.input_point_coordinate_frame!r}"
+        )
     pcd_range = np.asarray(cfg.point_cloud_range, dtype=np.float32)
     mask = (
         (points[:, 0] > pcd_range[0])

@@ -31,6 +31,7 @@ option(BUILD_RSCL_BAG_RUNNER "Build the C++ rsclbag offline runner" ON)
 option(BUILD_RSCL_ONLINE_NODE "Build the C++ RSCL online inference node" ON)
 option(RSCL_ENABLE_FFMPEG_DECODER "Enable FFmpeg-based H264/H265 camera decoding for the C++ RSCL adapter" ON)
 option(RSCL_ENABLE_OPENCV_UNDISTORT "Enable OpenCV camera undistortion for the C++ RSCL adapter" OFF)
+option(RSCL_ENABLE_NATIVE_UNDISTORT "Enable the isolated Yangluo OpenCV-free camera undistortion path" OFF)
 set(RSCL_BAG_BACKEND_SOURCE "" CACHE STRING "Optional source file implementing rscl_adapter::create_rscl_bag_reader with the vehicle RSCL SDK")
 set(RSCL_ONLINE_BACKEND_SOURCE "" CACHE STRING "Optional source file implementing the dlopen-loaded RSCL online backend")
 set(RSCL_RELEASE_ROOT "" CACHE PATH "Optional 695_x86 release directory or extracted SenseAuto package root")
@@ -756,6 +757,9 @@ if(RSCL_ENABLE_FFMPEG_DECODER)
 endif()
 
 set(RSCL_OPENCV_LIBRARIES "")
+if(RSCL_ENABLE_OPENCV_UNDISTORT AND RSCL_ENABLE_NATIVE_UNDISTORT)
+  message(FATAL_ERROR "Enable only one camera undistortion backend")
+endif()
 if(RSCL_ENABLE_OPENCV_UNDISTORT)
   set(RSCL_OPENCV_HINT_INCLUDE_DIRS "")
   set(RSCL_OPENCV_HINT_LIBRARY_DIRS "")
@@ -904,6 +908,14 @@ if(BUILD_RSCL_CPP)
   file(GLOB_RECURSE RSCL_ADAPTER_CPP_FILES
     deploy_rscl/cpp/src/*.cpp
   )
+  if(RSCL_ENABLE_NATIVE_UNDISTORT)
+    list(APPEND RSCL_ADAPTER_CPP_FILES
+      ${CMAKE_CURRENT_SOURCE_DIR}/yangluo_deploy/cpp/native_undistort.cpp
+    )
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/yangluo_deploy/cpp)
+    add_definitions(-DRSCL_HAVE_NATIVE_UNDISTORT)
+    message(STATUS "Yangluo native undistortion enabled")
+  endif()
   list(REMOVE_ITEM RSCL_ADAPTER_CPP_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_bag_runner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/deploy_rscl/cpp/src/rscl_bag_reader_stub.cpp

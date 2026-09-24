@@ -58,12 +58,26 @@ def load_json_with_comments(path):
     return json.loads(re.sub(r"/\*.*?\*/", "", text, flags=re.S))
 
 
+def distortion8(values, camera_id):
+    """Normalize OpenCV 4/5/8 coefficient models to the runtime 8-vector."""
+    values = list(map(float, values))
+    if len(values) == 4:
+        values.append(0.0)
+    if len(values) == 5:
+        values.extend([0.0, 0.0, 0.0])
+    if len(values) != 8:
+        raise RuntimeError(
+            f"camera {camera_id} must have 4, 5, or 8 distortion coefficients"
+        )
+    return values
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--front-id", default="0")
-    parser.add_argument("--rear-id", default="5")
+    parser.add_argument("--rear-id", default="10")
     args = parser.parse_args()
 
     raw = load_json_with_comments(args.input)
@@ -75,13 +89,11 @@ def main():
         cameras[name] = {
             "camera_intrinsics": intrinsic4(item["intrinsics"]),
             "camera2ego": inverse(flu_to_camera),
-            "distortion": list(map(float, item["distortion"])),
+            "distortion": distortion8(item["distortion"], camera_id),
             "source_camera_id": camera_id,
             "width": int(item["width"]),
             "height": int(item["height"]),
         }
-        if len(cameras[name]["distortion"]) != 8:
-            raise RuntimeError(f"camera {camera_id} must use the verified 8-coefficient rational model")
 
     output = {
         "coordinate_contract": "base_link FLU; supplied extrinsics are RFU vehicle to OpenCV camera",
@@ -96,4 +108,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
