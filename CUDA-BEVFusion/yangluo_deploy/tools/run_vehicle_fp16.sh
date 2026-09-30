@@ -13,9 +13,9 @@ elif [ "$#" -ne 0 ]; then
   exit 2
 fi
 
-config="$YANGLUO_REPO_ROOT/yangluo_deploy/configs/runtime_vehicle_48ms.yaml"
+config="${YANGLUO_VEHICLE_CONFIG:-$YANGLUO_REPO_ROOT/yangluo_deploy/configs/runtime_vehicle_48ms.yaml}"
 calibration="$YANGLUO_REPO_ROOT/yangluo_deploy/configs/calibration_vehicle_0_10.json"
-classes="$YANGLUO_REPO_ROOT/yangluo_deploy/configs/classes.txt"
+classes="${YANGLUO_CLASSES_FILE:-$YANGLUO_REPO_ROOT/yangluo_deploy/configs/classes.txt}"
 node="$YANGLUO_ROS_WS/devel/lib/yangluo_bevfusion/yangluo_bevfusion_node"
 
 # Dedicated vehicle defaults. Override them explicitly when the vehicle network

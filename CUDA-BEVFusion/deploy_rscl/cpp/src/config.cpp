@@ -125,6 +125,7 @@ AdapterConfig load_adapter_config(const std::string& path) {
   set_string_vector(root, "map_classes", &cfg.map_classes);
   set_bool(root, "print_model_info", &cfg.print_model_info);
   set_float(root, "score_threshold", &cfg.score_threshold);
+  set_float_vector(root, "class_score_thresholds", &cfg.class_score_thresholds);
   set_float(root, "sync_tolerance_ms", &cfg.sync_tolerance_ms);
   set_float_vector(root, "camera_time_offsets_ms", &cfg.camera_time_offsets_ms);
   set_float(root, "lidar_time_offset_ms", &cfg.lidar_time_offset_ms);
@@ -169,6 +170,17 @@ AdapterConfig load_adapter_config(const std::string& path) {
     throw std::runtime_error(
         "input_point_coordinate_frame must be FLU or RFU, got: " +
         cfg.input_point_coordinate_frame);
+  }
+  if (cfg.score_threshold < 0.0f || cfg.score_threshold > 1.0f) {
+    throw std::runtime_error("score_threshold must be in [0, 1]");
+  }
+  for (size_t i = 0; i < cfg.class_score_thresholds.size(); ++i) {
+    const float threshold = cfg.class_score_thresholds[i];
+    if (threshold < 0.0f || threshold > 1.0f) {
+      throw std::runtime_error(
+          "class_score_thresholds values must be in [0, 1], invalid class id " +
+          std::to_string(i));
+    }
   }
   return cfg;
 }

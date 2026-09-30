@@ -1,0 +1,60 @@
+node_name: "yangluo_bevfusion"
+module_name: "yangluo_bevfusion"
+device: "cuda:0"
+model: "yangluogang_swint18_epoch5_fp16_v1"
+profile: "yangluo_swint18"
+precision: "fp16"
+cuda_model_root: "../../model/yangluogang_swint18_epoch5_fp16_v1"
+print_model_info: false
+
+enable_object_detection: true
+enable_map_segmentation: false
+
+# Fallback for weak/unvalidated classes.  class_score_thresholds follows the
+# exact class-id order in classes_swint18_epoch5.txt.  The class-specific
+# values come from the supplied epoch-5 validation table.
+score_threshold: 0.20
+class_score_thresholds: [0.18, 0.12, 0.10, 0.06, 0.11, 0.21, 0.13, 0.01, 0.20, 0.01, 0.02, 0.04, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
+publish_empty_frame: true
+
+# Class-id order:
+#  0 truck=0.18                 1 other=0.12
+#  2 Crane_quay=0.10            3 trafficCone=0.06
+#  4 car=0.11                   5 AGV=0.21
+#  6 person=0.13                7 forkLift=0.01
+#  8 Crane_spreader=fallback    9 tricyclist=0.01
+# 10 fence=0.02                11 constructVehicle=0.04
+# 12 outlierCar=fallback       13 Crane_Tyre=fallback
+# 14 policeCar=fallback        15 sprinkler=fallback
+# 16 Twistlock_box=fallback    17 Twistlock_station=fallback
+
+camera_topics:
+  - "/cam5/compressed"
+  - "/cam10/compressed"
+camera_order:
+  - "front"
+  - "rear"
+lidar_topic: "/perception/lidar/concated_points_cloud"
+output_topic: "/perception/bevfusion/objects"
+
+sync_tolerance_ms: 50.0
+sync_queue_size: 30
+sync_debug: true
+sync_debug_limit: 100
+camera_time_offsets_ms: [48.0, 48.0]
+lidar_time_offset_ms: 0.0
+
+image_preprocess_size: [1080, 1920]
+image_size: [256, 704]
+image_resize: 0.40
+image_mean: [0.485, 0.456, 0.406]
+image_std: [0.229, 0.224, 0.225]
+# The supplied Swin epoch-5 config loaded raw images; keep deployment aligned.
+undistort_images: false
+
+point_dim: 5
+input_point_coordinate_frame: "RFU"
+point_cloud_range: [-54.0, -54.0, -3.0, 54.0, 54.0, 5.0]
+calibration_file: "calibration_vehicle_0_10.json"
+calibration_extrinsic_direction: "lidar2camera"
+allow_identity_calibration: false

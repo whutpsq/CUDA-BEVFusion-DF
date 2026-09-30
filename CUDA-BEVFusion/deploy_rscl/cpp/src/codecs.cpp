@@ -811,7 +811,12 @@ std::string encode_detection_message(const InferenceOutput& output, const Adapte
   bool first = true;
   for (size_t i = 0; i < output.detections.size(); ++i) {
     const Detection& det = output.detections[i];
-    if (det.score < cfg.score_threshold) continue;
+    float threshold = cfg.score_threshold;
+    if (det.label >= 0 &&
+        static_cast<size_t>(det.label) < cfg.class_score_thresholds.size()) {
+      threshold = cfg.class_score_thresholds[static_cast<size_t>(det.label)];
+    }
+    if (det.score < threshold) continue;
     if (!first) ss << ",";
     first = false;
     ss << "{\"label\":" << det.label << ",\"score\":" << det.score << ",\"box\":[";

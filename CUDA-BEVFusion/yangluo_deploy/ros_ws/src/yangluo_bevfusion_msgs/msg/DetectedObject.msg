@@ -3,6 +3,7 @@ uint32 id
 int32 class_id
 string class_name
 float32 score
+# Geometric center of the 3D box in the output frame.
 geometry_msgs/Pose pose
 # dimensions.x/y/z are box length along local x/y/z (model w/l/h).
 geometry_msgs/Vector3 dimensions

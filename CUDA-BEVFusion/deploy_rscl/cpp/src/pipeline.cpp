@@ -14,6 +14,15 @@ BevFusionPipeline::BevFusionPipeline(const AdapterConfig& cfg, bool decode_only)
       sync_(cfg.camera_topics, cfg.camera_order, cfg.lidar_topic, cfg.sync_tolerance_ms,
             static_cast<size_t>(cfg.sync_queue_size), cfg.sync_debug, cfg.sync_debug_limit,
             cfg.camera_time_offsets_ms, cfg.lidar_time_offset_ms) {
+  if (!cfg_.class_score_thresholds.empty()) {
+    std::cout << "threshold_contract=per_class fallback=" << cfg_.score_threshold
+              << " count=" << cfg_.class_score_thresholds.size() << " values=";
+    for (size_t i = 0; i < cfg_.class_score_thresholds.size(); ++i) {
+      if (i) std::cout << ",";
+      std::cout << cfg_.class_score_thresholds[i];
+    }
+    std::cout << std::endl;
+  }
   if (!decode_only_) {
     calibration_ =
         load_calibration(cfg_.calibration_file, cfg_.camera_order, cfg_.calibration_extrinsic_direction, cfg_.allow_identity_calibration);

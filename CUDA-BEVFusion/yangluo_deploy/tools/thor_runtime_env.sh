@@ -6,7 +6,7 @@ yangluo_tools_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export YANGLUO_REPO_ROOT="$(cd "$yangluo_tools_dir/../.." && pwd)"
 export YANGLUO_BUNDLE_ROOT="$(cd "$YANGLUO_REPO_ROOT/.." && pwd)"
 
-export YANGLUO_MODEL_DIR="$YANGLUO_REPO_ROOT/model/yangluo_resnet50_fp16"
+export YANGLUO_MODEL_DIR="${YANGLUO_MODEL_DIR:-$YANGLUO_REPO_ROOT/model/yangluo_resnet50_fp16}"
 export YANGLUO_CORE_DIR="$YANGLUO_REPO_ROOT/yangluo_deploy/generated/build_arm64_core"
 export YANGLUO_ROS_WS="$YANGLUO_REPO_ROOT/yangluo_deploy/ros_ws"
 export YANGLUO_TRT_BUILDER="$YANGLUO_REPO_ROOT/build_yangluo_trt_builder_static/yangluo_trt_builder"

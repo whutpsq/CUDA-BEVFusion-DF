@@ -43,6 +43,10 @@ struct AdapterConfig {
       "drivable_area", "ped_crossing", "walkway", "stop_line", "carpark_area", "divider"};
   bool print_model_info = false;
   float score_threshold = 0.2f;
+  // Optional class-id ordered thresholds.  An empty vector preserves the
+  // legacy single score_threshold behavior for passenger-car and existing
+  // Yangluo configurations.  Missing class ids fall back to score_threshold.
+  std::vector<float> class_score_thresholds;
   float sync_tolerance_ms = 50.0f;
   std::vector<float> camera_time_offsets_ms;
   float lidar_time_offset_ms = 0.0f;

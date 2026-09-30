@@ -88,6 +88,7 @@ static std::vector<nvtype::half> floats_to_host_half(const std::vector<float>& v
 
 static bevfusion::CoreParameter make_core_parameter(const AdapterConfig& cfg) {
   const bool is_bevfusion_df = cfg.profile == "bevfusion_df";
+  const bool is_yangluo_swint18 = cfg.profile == "yangluo_swint18";
 
   const std::string camera = default_or_override(cfg.camera_plan, cfg.cuda_model_root, "build/camera.backbone.plan");
   const std::string vtransform =
@@ -117,8 +118,19 @@ static bevfusion::CoreParameter make_core_parameter(const AdapterConfig& cfg) {
   normalization.method = bevfusion::camera::NormMethod::mean_std(cfg.image_mean, cfg.image_std, 1 / 255.0f, 0.0f);
 
   bevfusion::lidar::VoxelizationParameter voxelization;
-  voxelization.min_range = is_bevfusion_df ? nvtype::Float3(-51.2f, -51.2f, -5.0f) : nvtype::Float3(-54.0f, -54.0f, -5.0f);
-  voxelization.max_range = is_bevfusion_df ? nvtype::Float3(+51.2f, +51.2f, +3.0f) : nvtype::Float3(+54.0f, +54.0f, +3.0f);
+  // Preserve both legacy profiles exactly.  The 18-class Yangluo Swin model
+  // was trained with a shifted vertical range [-3, 5], so its voxel indices
+  // must use the point_cloud_range carried by the matching runtime YAML.
+  voxelization.min_range = is_yangluo_swint18
+                               ? nvtype::Float3(cfg.point_cloud_range[0], cfg.point_cloud_range[1],
+                                                cfg.point_cloud_range[2])
+                               : (is_bevfusion_df ? nvtype::Float3(-51.2f, -51.2f, -5.0f)
+                                                  : nvtype::Float3(-54.0f, -54.0f, -5.0f));
+  voxelization.max_range = is_yangluo_swint18
+                               ? nvtype::Float3(cfg.point_cloud_range[3], cfg.point_cloud_range[4],
+                                                cfg.point_cloud_range[5])
+                               : (is_bevfusion_df ? nvtype::Float3(+51.2f, +51.2f, +3.0f)
+                                                  : nvtype::Float3(+54.0f, +54.0f, +3.0f));
   voxelization.voxel_size = is_bevfusion_df ? nvtype::Float3(0.2f, 0.2f, 0.2f) : nvtype::Float3(0.075f, 0.075f, 0.2f);
   voxelization.grid_size =
       voxelization.compute_grid_size(voxelization.max_range, voxelization.min_range, voxelization.voxel_size);

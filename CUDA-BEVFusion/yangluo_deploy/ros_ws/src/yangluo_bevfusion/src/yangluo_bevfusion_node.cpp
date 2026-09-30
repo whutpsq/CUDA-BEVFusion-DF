@@ -210,13 +210,18 @@ class YangluoNode {
       object.score = static_cast<float>(score_value->as_number());
       object.pose.position.x = box->array[0].as_number();
       object.pose.position.y = box->array[1].as_number();
-      object.pose.position.z = box->array[2].as_number();
       const double yaw = box->array[6].as_number();
       object.pose.orientation.z = std::sin(yaw * 0.5);
       object.pose.orientation.w = std::cos(yaw * 0.5);
       object.dimensions.x = box->array[3].as_number();
       object.dimensions.y = box->array[4].as_number();
       object.dimensions.z = box->array[5].as_number();
+      // CUDA-BEVFusion's TransBBox decoder publishes box[2] as the bottom-face
+      // Z (it has already subtracted half the decoded height).  ROS Pose uses
+      // the geometric box center so that pose +/- dimensions / 2 produces the
+      // correct bottom and top faces for camera projection and downstream use.
+      const double bottom_z = box->array[2].as_number();
+      object.pose.position.z = bottom_z + object.dimensions.z * 0.5;
       object.velocity.linear.x = box->array[7].as_number();
       object.velocity.linear.y = box->array[8].as_number();
 
@@ -229,7 +234,7 @@ class YangluoNode {
       for (size_t corner = 0; corner < 4; ++corner) {
         object.corners[corner].x = object.pose.position.x + cosine * local_x[corner] - sine * local_y[corner];
         object.corners[corner].y = object.pose.position.y + sine * local_x[corner] + cosine * local_y[corner];
-        object.corners[corner].z = object.pose.position.z - object.dimensions.z * 0.5;
+        object.corners[corner].z = bottom_z;
       }
       output.objects.push_back(object);
     }

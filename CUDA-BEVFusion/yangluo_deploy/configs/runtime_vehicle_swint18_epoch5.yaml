@@ -1,0 +1,49 @@
+node_name: "yangluo_bevfusion"
+module_name: "yangluo_bevfusion"
+device: "cuda:0"
+model: "yangluogang_swint18_epoch5_fp16_v1"
+# Selects the original Yangluo Swin geometry (0.075 m voxels, 360x360 BEV)
+# and reads the model-specific vertical range from point_cloud_range below.
+profile: "yangluo_swint18"
+precision: "fp16"
+cuda_model_root: "../../model/yangluogang_swint18_epoch5_fp16_v1"
+print_model_info: false
+
+enable_object_detection: true
+enable_map_segmentation: false
+score_threshold: 0.20
+publish_empty_frame: true
+
+# Keep the vehicle camera mapping and synchronization values already validated
+# by the previous live Thor deployment.
+camera_topics:
+  - "/cam5/compressed"
+  - "/cam10/compressed"
+camera_order:
+  - "front"
+  - "rear"
+lidar_topic: "/perception/lidar/concated_points_cloud"
+output_topic: "/perception/bevfusion/objects"
+
+sync_tolerance_ms: 50.0
+sync_queue_size: 30
+sync_debug: true
+sync_debug_limit: 100
+camera_time_offsets_ms: [48.0, 48.0]
+lidar_time_offset_ms: 0.0
+
+image_preprocess_size: [1080, 1920]
+image_size: [256, 704]
+image_resize: 0.40
+image_mean: [0.485, 0.456, 0.406]
+image_std: [0.229, 0.224, 0.225]
+undistort_images: true
+
+point_dim: 5
+input_point_coordinate_frame: "RFU"
+# Must match H:\DF2\configs.yaml exactly.  In particular, do not reuse the
+# old ResNet50 vertical range [-5, 3].
+point_cloud_range: [-54.0, -54.0, -3.0, 54.0, 54.0, 5.0]
+calibration_file: "calibration_vehicle_0_10.json"
+calibration_extrinsic_direction: "lidar2camera"
+allow_identity_calibration: false
